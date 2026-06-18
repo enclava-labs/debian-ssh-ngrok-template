@@ -112,10 +112,26 @@ Subsystem sftp internal-sftp
 EOF
 }
 
-prepare_home() {
-    if [ "$DEBIAN_SSH_HOME" = "/home/lio" ]; then
-        mkdir -p /state/app-data/home/lio
+ensure_luks_home_link() {
+    if [ "$DEBIAN_SSH_HOME" != "/home/lio" ]; then
+        return 0
     fi
+
+    mkdir -p /state/app-data/home/lio
+    if [ -L /home/lio ]; then
+        return 0
+    fi
+    if [ -d /home/lio ]; then
+        rmdir /home/lio 2>/dev/null || {
+            echo "/home/lio must be empty before linking it to encrypted app data" >&2
+            exit 1
+        }
+    fi
+    ln -s /state/app-data/home/lio /home/lio
+}
+
+prepare_home() {
+    ensure_luks_home_link
     mkdir -p "$DEBIAN_SSH_HOME/.ssh" "$DEBIAN_SSH_HOME/.config/ngrok" "$DEBIAN_SSH_HOME/.cache/ngrok" "$DEBIAN_SSH_HOME/health"
     chmod 700 "$DEBIAN_SSH_HOME" 2>/dev/null || true
     chmod 700 "$DEBIAN_SSH_HOME/.ssh" "$DEBIAN_SSH_HOME/.config" "$DEBIAN_SSH_HOME/.config/ngrok" "$DEBIAN_SSH_HOME/.cache" "$DEBIAN_SSH_HOME/.cache/ngrok"
