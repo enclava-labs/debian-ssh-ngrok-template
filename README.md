@@ -4,9 +4,11 @@ Public image source for the Enclava PaaS `debian-ssh-ngrok` hosted
 deployment template.
 
 - Runs as UID/GID `10001`, matching CAP's unprivileged workload container.
-- Requests `/state/home-lio` as CAP encrypted storage and exposes it at
-  `/home/lio` through an image-level symlink, keeping SSH state, authorized
-  keys, host keys, and user files on the LUKS-backed home.
+- Uses CAP's encrypted config handoff runtime directory at
+  `/state/.enclava/config/.runtime/home-lio` and exposes it at `/home/lio`
+  through an image-level symlink, keeping SSH state, authorized keys, host keys,
+  and user files on the LUKS-backed state volume without a separate app bind
+  mount.
 - Reads CAP config from the encrypted config handoff, currently
   `/state/.enclava/config` for this template.
 - Exposes HTTP health on `8080` for CAP readiness.

@@ -90,6 +90,17 @@ append_authorized_key() {
     printf '%s\n' "$AUTHORIZED_KEY" >>"$file"
 }
 
+prepare_home_target() {
+    if [ -L "$DEBIAN_SSH_HOME" ]; then
+        target="$(readlink "$DEBIAN_SSH_HOME")"
+        case "$target" in
+            /*)
+                mkdir -p "$target"
+                ;;
+        esac
+    fi
+}
+
 write_sshd_config() {
     cat >"$DEBIAN_SSH_HOME/.ssh/sshd_config" <<EOF
 Port ${DEBIAN_SSH_PORT}
@@ -113,6 +124,7 @@ EOF
 }
 
 prepare_home() {
+    prepare_home_target
     mkdir -p "$DEBIAN_SSH_HOME/.ssh" "$DEBIAN_SSH_HOME/.config/ngrok" "$DEBIAN_SSH_HOME/.cache/ngrok" "$DEBIAN_SSH_HOME/health"
     chmod 700 "$DEBIAN_SSH_HOME" 2>/dev/null || true
     chmod 700 "$DEBIAN_SSH_HOME/.ssh" "$DEBIAN_SSH_HOME/.config" "$DEBIAN_SSH_HOME/.config/ngrok" "$DEBIAN_SSH_HOME/.cache" "$DEBIAN_SSH_HOME/.cache/ngrok"
