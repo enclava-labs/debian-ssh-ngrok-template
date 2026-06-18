@@ -113,6 +113,9 @@ EOF
 }
 
 prepare_home() {
+    if [ "$DEBIAN_SSH_HOME" = "/home/lio" ]; then
+        mkdir -p /state/app-data/home/lio
+    fi
     mkdir -p "$DEBIAN_SSH_HOME/.ssh" "$DEBIAN_SSH_HOME/.config/ngrok" "$DEBIAN_SSH_HOME/.cache/ngrok" "$DEBIAN_SSH_HOME/health"
     chmod 700 "$DEBIAN_SSH_HOME" 2>/dev/null || true
     chmod 700 "$DEBIAN_SSH_HOME/.ssh" "$DEBIAN_SSH_HOME/.config" "$DEBIAN_SSH_HOME/.config/ngrok" "$DEBIAN_SSH_HOME/.cache" "$DEBIAN_SSH_HOME/.cache/ngrok"
