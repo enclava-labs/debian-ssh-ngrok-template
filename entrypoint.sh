@@ -201,11 +201,11 @@ cleanup() {
 
 trap cleanup INT TERM EXIT
 
+prepare_home
+start_health
 wait_for_config
 load_cap_config
 require_nonempty_env NGROK_AUTHTOKEN
-prepare_home
-start_health
 start_sshd
 start_ngrok
 publish_ngrok_status
