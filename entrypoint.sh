@@ -28,6 +28,13 @@ is_valid_env_key() {
 
 first_config_dir() {
     for dir in $DEBIAN_SSH_CAP_CONFIG_DIRS; do
+        if [ -f "$dir/.ready" ]; then
+            printf '%s\n' "$dir"
+            return 0
+        fi
+    done
+
+    for dir in $DEBIAN_SSH_CAP_CONFIG_DIRS; do
         if [ -d "$dir" ]; then
             printf '%s\n' "$dir"
             return 0
