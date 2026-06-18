@@ -16,8 +16,8 @@ RUN apt-get update \
     && chmod 0755 /usr/local/bin/ngrok \
     && groupadd --gid 10001 lio \
     && useradd --uid 10001 --gid 10001 --home-dir /home/lio --shell /bin/bash lio \
-    && mkdir -p /home/lio /state/app-data/home/lio /run/sshd \
-    && chown -R 10001:10001 /home /state/app-data
+    && mkdir -p /home/lio /run/sshd \
+    && chown -R 10001:10001 /home
 
 COPY entrypoint.sh /usr/local/bin/debian-ssh-ngrok-entrypoint
 RUN chmod 0755 /usr/local/bin/debian-ssh-ngrok-entrypoint
