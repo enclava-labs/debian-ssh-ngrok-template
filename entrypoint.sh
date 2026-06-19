@@ -287,6 +287,14 @@ restart_ngrok() {
     start_ngrok
 }
 
+sleep_supervise_interval() {
+    remaining="$DEBIAN_SSH_SUPERVISE_INTERVAL_SECONDS"
+    while [ "$remaining" -gt 0 ]; do
+        sleep 1
+        remaining=$((remaining - 1))
+    done
+}
+
 supervise_services() {
     ngrok_api_failures=0
 
@@ -294,7 +302,7 @@ supervise_services() {
         if ! process_running "${HEALTH_PID:-}"; then
             mark_unready
             restart_health
-            sleep "$DEBIAN_SSH_SUPERVISE_INTERVAL_SECONDS"
+            sleep_supervise_interval
             continue
         fi
 
@@ -302,7 +310,7 @@ supervise_services() {
             mark_unready
             ngrok_api_failures=0
             restart_sshd
-            sleep "$DEBIAN_SSH_SUPERVISE_INTERVAL_SECONDS"
+            sleep_supervise_interval
             continue
         fi
 
@@ -310,7 +318,7 @@ supervise_services() {
             mark_unready
             ngrok_api_failures=0
             restart_ngrok
-            sleep "$DEBIAN_SSH_SUPERVISE_INTERVAL_SECONDS"
+            sleep_supervise_interval
             continue
         fi
 
@@ -328,7 +336,7 @@ supervise_services() {
             fi
         fi
 
-        sleep "$DEBIAN_SSH_SUPERVISE_INTERVAL_SECONDS"
+        sleep_supervise_interval
     done
 }
 
@@ -338,7 +346,16 @@ cleanup() {
     [ -z "${NGROK_PID:-}" ] || kill "$NGROK_PID" 2>/dev/null || true
 }
 
-trap cleanup INT TERM EXIT
+terminate() {
+    status="$1"
+    trap - INT TERM EXIT
+    cleanup
+    exit "$status"
+}
+
+trap 'terminate 130' INT
+trap 'terminate 143' TERM
+trap cleanup EXIT
 
 prepare_home
 start_health
