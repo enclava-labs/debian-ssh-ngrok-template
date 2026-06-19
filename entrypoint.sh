@@ -242,7 +242,7 @@ stop_process() {
     while process_running "$pid"; do
         if [ "$elapsed" -ge 2 ]; then
             echo "process ${pid} did not stop after SIGKILL" >&2
-            return 1
+            return 0
         fi
         sleep 1
         elapsed=$((elapsed + 1))
@@ -271,19 +271,19 @@ ngrok_public_url() {
 
 restart_sshd() {
     echo "sshd is not answering; restarting" >&2
-    stop_process "${SSHD_PID:-}"
+    stop_process "${SSHD_PID:-}" || true
     start_sshd
 }
 
 restart_health() {
     echo "health server is not running; restarting" >&2
-    stop_process "${HEALTH_PID:-}"
+    stop_process "${HEALTH_PID:-}" || true
     start_health
 }
 
 restart_ngrok() {
     echo "ngrok is not running; restarting" >&2
-    stop_process "${NGROK_PID:-}"
+    stop_process "${NGROK_PID:-}" || true
     start_ngrok
 }
 
