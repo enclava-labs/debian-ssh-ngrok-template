@@ -16,6 +16,9 @@ deployment template.
   when both local SSH and the ngrok TCP tunnel are live.
 - Runs SSH internally on `2222` because CAP drops low-port bind capability.
 - Starts `ngrok tcp 127.0.0.1:2222` using `NGROK_AUTHTOKEN`.
+  By default ngrok assigns a dynamic TCP host:port; set `NGROK_TCP_URL`
+  to a reserved ngrok TCP Address when the SSH command must remain stable
+  across ngrok or pod restarts.
 - Publishes the discovered ngrok endpoint on `/ngrok-url.txt`, `/ssh.txt`,
   and `/ngrok.json` through the health HTTP server.
 

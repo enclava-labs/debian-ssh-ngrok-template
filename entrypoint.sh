@@ -10,9 +10,11 @@ AUTHORIZED_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ7cAp6elwfMEiNuvLhVyb1xTceS
 : "${DEBIAN_NGROK_WEB_PORT:=4040}"
 : "${DEBIAN_NGROK_API_TIMEOUT_SECONDS:=3}"
 : "${DEBIAN_NGROK_API_FAILURE_RESTARTS:=3}"
+: "${DEBIAN_NGROK_UNREADY_EXIT_SECONDS:=300}"
 : "${DEBIAN_SSH_SUPERVISE_INTERVAL_SECONDS:=5}"
 : "${DEBIAN_STOP_TIMEOUT_SECONDS:=5}"
 : "${ENCLAVA_REQUIRED_CONFIG_KEYS:=NGROK_AUTHTOKEN}"
+: "${NGROK_TCP_URL:=}"
 : "${DEBIAN_SSH_CAP_CONFIG_DIRS:=/state/app-data/.enclava/config /state/.enclava/config /home/user/.enclava/config}"
 if [ -z "${DEBIAN_SSH_CONFIG_WAIT_SECONDS+x}" ]; then
     if [ -n "${ENCLAVA_CONTAINER_NAME:-}" ]; then
@@ -221,11 +223,20 @@ version: 3
 agent:
   web_addr: 127.0.0.1:${DEBIAN_NGROK_WEB_PORT}
 EOF
-    ngrok tcp "127.0.0.1:${DEBIAN_SSH_PORT}" \
-        --authtoken "$NGROK_AUTHTOKEN" \
-        --config "$DEBIAN_SSH_HOME/.config/ngrok/ngrok.yml" \
-        --log stdout \
-        --log-format json &
+    if [ -n "$NGROK_TCP_URL" ]; then
+        ngrok tcp "127.0.0.1:${DEBIAN_SSH_PORT}" \
+            --url "$NGROK_TCP_URL" \
+            --authtoken "$NGROK_AUTHTOKEN" \
+            --config "$DEBIAN_SSH_HOME/.config/ngrok/ngrok.yml" \
+            --log stdout \
+            --log-format json &
+    else
+        ngrok tcp "127.0.0.1:${DEBIAN_SSH_PORT}" \
+            --authtoken "$NGROK_AUTHTOKEN" \
+            --config "$DEBIAN_SSH_HOME/.config/ngrok/ngrok.yml" \
+            --log stdout \
+            --log-format json &
+    fi
     NGROK_PID="$!"
 }
 
@@ -342,6 +353,15 @@ restart_ngrok() {
     start_ngrok
 }
 
+record_ngrok_unready() {
+    ngrok_unready_seconds=$((ngrok_unready_seconds + DEBIAN_SSH_SUPERVISE_INTERVAL_SECONDS))
+    if [ "$DEBIAN_NGROK_UNREADY_EXIT_SECONDS" -gt 0 ] \
+        && [ "$ngrok_unready_seconds" -ge "$DEBIAN_NGROK_UNREADY_EXIT_SECONDS" ]; then
+        echo "ngrok stayed unready for ${ngrok_unready_seconds}s; exiting for container restart" >&2
+        exit 1
+    fi
+}
+
 sleep_supervise_interval() {
     remaining="$DEBIAN_SSH_SUPERVISE_INTERVAL_SECONDS"
     while [ "$remaining" -gt 0 ]; do
@@ -352,6 +372,7 @@ sleep_supervise_interval() {
 
 supervise_services() {
     ngrok_api_failures=0
+    ngrok_unready_seconds=0
 
     while :; do
         if ! process_running "${HEALTH_PID:-}"; then
@@ -372,6 +393,7 @@ supervise_services() {
         if ! process_running "${NGROK_PID:-}"; then
             mark_unready
             ngrok_api_failures=0
+            record_ngrok_unready
             restart_ngrok
             sleep_supervise_interval
             continue
@@ -380,10 +402,12 @@ supervise_services() {
         public_url="$(ngrok_public_url || true)"
         if [ -n "$public_url" ]; then
             ngrok_api_failures=0
+            ngrok_unready_seconds=0
             mark_ready "$public_url"
         else
             ngrok_api_failures=$((ngrok_api_failures + 1))
             mark_unready
+            record_ngrok_unready
             if [ "$ngrok_api_failures" -ge "$DEBIAN_NGROK_API_FAILURE_RESTARTS" ]; then
                 echo "ngrok API is not answering; restarting" >&2
                 restart_ngrok
