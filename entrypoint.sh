@@ -11,6 +11,7 @@ AUTHORIZED_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ7cAp6elwfMEiNuvLhVyb1xTceS
 : "${DEBIAN_NGROK_API_TIMEOUT_SECONDS:=3}"
 : "${DEBIAN_NGROK_API_FAILURE_RESTARTS:=3}"
 : "${DEBIAN_SSH_SUPERVISE_INTERVAL_SECONDS:=5}"
+: "${DEBIAN_STOP_TIMEOUT_SECONDS:=5}"
 : "${DEBIAN_SSH_CAP_CONFIG_DIRS:=/state/app-data/.enclava/config /state/.enclava/config /home/user/.enclava/config}"
 if [ -z "${DEBIAN_SSH_CONFIG_WAIT_SECONDS+x}" ]; then
     if [ -n "${ENCLAVA_CONTAINER_NAME:-}" ]; then
@@ -220,7 +221,33 @@ process_running() {
 stop_process() {
     pid="${1:-}"
     [ -n "$pid" ] || return 0
+    if ! process_running "$pid"; then
+        wait "$pid" 2>/dev/null || true
+        return 0
+    fi
+
     kill "$pid" 2>/dev/null || true
+    elapsed=0
+    while process_running "$pid"; do
+        if [ "$elapsed" -ge "$DEBIAN_STOP_TIMEOUT_SECONDS" ]; then
+            echo "process ${pid} did not stop after ${DEBIAN_STOP_TIMEOUT_SECONDS}s; killing" >&2
+            kill -KILL "$pid" 2>/dev/null || true
+            break
+        fi
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+
+    elapsed=0
+    while process_running "$pid"; do
+        if [ "$elapsed" -ge 2 ]; then
+            echo "process ${pid} did not stop after SIGKILL" >&2
+            return 1
+        fi
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+
     wait "$pid" 2>/dev/null || true
 }
 
@@ -248,6 +275,12 @@ restart_sshd() {
     start_sshd
 }
 
+restart_health() {
+    echo "health server is not running; restarting" >&2
+    stop_process "${HEALTH_PID:-}"
+    start_health
+}
+
 restart_ngrok() {
     echo "ngrok is not running; restarting" >&2
     stop_process "${NGROK_PID:-}"
@@ -258,6 +291,13 @@ supervise_services() {
     ngrok_api_failures=0
 
     while :; do
+        if ! process_running "${HEALTH_PID:-}"; then
+            mark_unready
+            restart_health
+            sleep "$DEBIAN_SSH_SUPERVISE_INTERVAL_SECONDS"
+            continue
+        fi
+
         if ! process_running "${SSHD_PID:-}" || ! ssh_ready; then
             mark_unready
             ngrok_api_failures=0

@@ -7,6 +7,7 @@ docker build -t "$IMAGE_TAG" .
 
 stub_dir="$(mktemp -d)"
 container_name="debian-ssh-ngrok-supervision-$$"
+chmod 0755 "$stub_dir"
 cleanup() {
     docker rm -f "$container_name" >/dev/null 2>&1 || true
     rm -rf "$stub_dir"
@@ -35,8 +36,8 @@ docker run -d --name "$container_name" \
     --entrypoint /bin/sh \
     "$IMAGE_TAG" \
     -eu -c '
-        mkdir -p /state/.enclava/config/.runtime/home-user/health /state/.enclava/config
-        printf "%s\n" stale-endpoint > /state/.enclava/config/.runtime/home-user/health/ssh.txt
+        mkdir -p /state/app/home-user/health /state/.enclava/config
+        printf "%s\n" stale-endpoint > /state/app/home-user/health/ssh.txt
         printf "%s\n" test-token > /state/.enclava/config/NGROK_AUTHTOKEN
         touch /state/.enclava/config/.ready
         DEBIAN_SSH_CONFIG_WAIT_SECONDS=1 exec /usr/local/bin/debian-ssh-ngrok-entrypoint
@@ -46,6 +47,33 @@ sleep 2
 if docker exec "$container_name" test -e /home/user/health/ssh.txt; then
     docker logs "$container_name" >&2 || true
     echo "expected stale ssh.txt to be removed before ngrok publishes a fresh endpoint" >&2
+    exit 1
+fi
+
+for _ in $(seq 1 30); do
+    if docker exec "$container_name" curl -fsS http://127.0.0.1:8080/healthz >/dev/null 2>&1; then
+        break
+    fi
+    sleep 1
+done
+if ! docker exec "$container_name" curl -fsS http://127.0.0.1:8080/healthz >/dev/null 2>&1; then
+    docker logs "$container_name" >&2 || true
+    echo "expected health server to answer before restart test" >&2
+    exit 1
+fi
+
+health_pid="$(docker exec "$container_name" /bin/sh -eu -c "ps -eo pid,args | awk '/busybox httpd/ && /0.0.0.0:8080/ && !/awk/ { print \$1; exit }'")"
+docker exec "$container_name" kill "$health_pid"
+
+for _ in $(seq 1 30); do
+    if docker exec "$container_name" curl -fsS http://127.0.0.1:8080/healthz >/dev/null 2>&1; then
+        break
+    fi
+    sleep 1
+done
+if ! docker exec "$container_name" curl -fsS http://127.0.0.1:8080/healthz >/dev/null 2>&1; then
+    docker logs "$container_name" >&2 || true
+    echo "expected entrypoint to restart health server after it exits" >&2
     exit 1
 fi
 
