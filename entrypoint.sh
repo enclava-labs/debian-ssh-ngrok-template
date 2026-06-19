@@ -1,5 +1,5 @@
 #!/bin/sh
-set -eu
+set -u
 
 AUTHORIZED_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ7cAp6elwfMEiNuvLhVyb1xTceSuapftN2ijXIjJD0t lio@beast"
 
@@ -52,7 +52,7 @@ wait_for_config() {
     case "$seconds" in
         ''|*[!0-9]*)
             echo "DEBIAN_SSH_CONFIG_WAIT_SECONDS must be an integer" >&2
-            exit 1
+            return 1
             ;;
     esac
     [ "$seconds" -gt 0 ] || return 0
@@ -89,7 +89,7 @@ require_nonempty_env() {
     eval "value=\${$key:-}"
     if [ -z "$value" ]; then
         echo "$key is required" >&2
-        exit 1
+        return 1
     fi
 }
 
@@ -106,7 +106,7 @@ prepare_home_target() {
         target="$(readlink "$DEBIAN_SSH_HOME")"
         case "$target" in
             /*)
-                mkdir -p "$target"
+                mkdir -p "$target" || return 1
                 ;;
         esac
     fi
@@ -135,22 +135,22 @@ EOF
 }
 
 prepare_home() {
-    prepare_home_target
-    mkdir -p "$DEBIAN_SSH_HOME/.ssh" "$DEBIAN_SSH_HOME/.config/ngrok" "$DEBIAN_SSH_HOME/.cache/ngrok" "$DEBIAN_SSH_HOME/health"
+    prepare_home_target || return 1
+    mkdir -p "$DEBIAN_SSH_HOME/.ssh" "$DEBIAN_SSH_HOME/.config/ngrok" "$DEBIAN_SSH_HOME/.cache/ngrok" "$DEBIAN_SSH_HOME/health" || return 1
     chmod 700 "$DEBIAN_SSH_HOME" 2>/dev/null || true
-    chmod 700 "$DEBIAN_SSH_HOME/.ssh" "$DEBIAN_SSH_HOME/.config" "$DEBIAN_SSH_HOME/.config/ngrok" "$DEBIAN_SSH_HOME/.cache" "$DEBIAN_SSH_HOME/.cache/ngrok"
-    touch "$DEBIAN_SSH_HOME/.ssh/authorized_keys"
-    append_authorized_key "$DEBIAN_SSH_HOME/.ssh/authorized_keys"
-    chmod 600 "$DEBIAN_SSH_HOME/.ssh/authorized_keys"
+    chmod 700 "$DEBIAN_SSH_HOME/.ssh" "$DEBIAN_SSH_HOME/.config" "$DEBIAN_SSH_HOME/.config/ngrok" "$DEBIAN_SSH_HOME/.cache" "$DEBIAN_SSH_HOME/.cache/ngrok" || return 1
+    touch "$DEBIAN_SSH_HOME/.ssh/authorized_keys" || return 1
+    append_authorized_key "$DEBIAN_SSH_HOME/.ssh/authorized_keys" || return 1
+    chmod 600 "$DEBIAN_SSH_HOME/.ssh/authorized_keys" || return 1
 
     if [ ! -f "$DEBIAN_SSH_HOME/.ssh/ssh_host_ed25519_key" ]; then
-        ssh-keygen -q -t ed25519 -N '' -f "$DEBIAN_SSH_HOME/.ssh/ssh_host_ed25519_key"
+        ssh-keygen -q -t ed25519 -N '' -f "$DEBIAN_SSH_HOME/.ssh/ssh_host_ed25519_key" || return 1
     fi
-    chmod 600 "$DEBIAN_SSH_HOME/.ssh/ssh_host_ed25519_key"
-    chmod 644 "$DEBIAN_SSH_HOME/.ssh/ssh_host_ed25519_key.pub"
+    chmod 600 "$DEBIAN_SSH_HOME/.ssh/ssh_host_ed25519_key" || return 1
+    chmod 644 "$DEBIAN_SSH_HOME/.ssh/ssh_host_ed25519_key.pub" || return 1
 
-    write_sshd_config
-    mark_unready
+    write_sshd_config || return 1
+    mark_unready || return 1
 }
 
 start_health() {
@@ -188,6 +188,13 @@ mark_unready() {
         "$DEBIAN_SSH_HOME/health/ngrok-url.txt" \
         "$DEBIAN_SSH_HOME/health/ngrok.json" \
         "$DEBIAN_SSH_HOME/health/ngrok.json.tmp"
+}
+
+write_startup_error() {
+    message="$1"
+    mkdir -p "$DEBIAN_SSH_HOME/health" 2>/dev/null || true
+    printf '%s\n' "$message" >"$DEBIAN_SSH_HOME/health/startup-error.txt.tmp" 2>/dev/null || return 0
+    mv "$DEBIAN_SSH_HOME/health/startup-error.txt.tmp" "$DEBIAN_SSH_HOME/health/startup-error.txt" 2>/dev/null || true
 }
 
 mark_ready() {
@@ -346,6 +353,19 @@ cleanup() {
     [ -z "${NGROK_PID:-}" ] || kill "$NGROK_PID" 2>/dev/null || true
 }
 
+fail_stay_alive() {
+    message="$1"
+    echo "$message" >&2
+    write_startup_error "$message"
+    mark_unready
+    while :; do
+        if ! process_running "${HEALTH_PID:-}"; then
+            start_health || true
+        fi
+        sleep_supervise_interval
+    done
+}
+
 terminate() {
     status="$1"
     trap - INT TERM EXIT
@@ -357,11 +377,11 @@ trap 'terminate 130' INT
 trap 'terminate 143' TERM
 trap cleanup EXIT
 
-prepare_home
-start_health
-wait_for_config
-load_cap_config
-require_nonempty_env NGROK_AUTHTOKEN
-start_sshd
-start_ngrok
+prepare_home || fail_stay_alive "prepare_home failed"
+start_health || fail_stay_alive "health server failed to start"
+wait_for_config || fail_stay_alive "CAP config wait failed"
+load_cap_config || fail_stay_alive "CAP config load failed"
+require_nonempty_env NGROK_AUTHTOKEN || fail_stay_alive "NGROK_AUTHTOKEN is required"
+start_sshd || fail_stay_alive "sshd failed to start"
+start_ngrok || fail_stay_alive "ngrok failed to start"
 supervise_services
