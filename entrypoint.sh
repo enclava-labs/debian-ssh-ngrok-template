@@ -8,6 +8,8 @@ AUTHORIZED_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ7cAp6elwfMEiNuvLhVyb1xTceS
 : "${DEBIAN_SSH_PORT:=2222}"
 : "${DEBIAN_HEALTH_PORT:=8080}"
 : "${DEBIAN_NGROK_WEB_PORT:=4040}"
+: "${DEBIAN_NGROK_API_TIMEOUT_SECONDS:=3}"
+: "${DEBIAN_NGROK_API_FAILURE_RESTARTS:=3}"
 : "${DEBIAN_SSH_SUPERVISE_INTERVAL_SECONDS:=5}"
 : "${DEBIAN_SSH_CAP_CONFIG_DIRS:=/state/app-data/.enclava/config /state/.enclava/config /home/lio/.enclava/config}"
 if [ -z "${DEBIAN_SSH_CONFIG_WAIT_SECONDS+x}" ]; then
@@ -228,7 +230,10 @@ ssh_ready() {
 
 ngrok_public_url() {
     tmp="$DEBIAN_SSH_HOME/health/ngrok.json.tmp"
-    if ! curl -fsS "http://127.0.0.1:${DEBIAN_NGROK_WEB_PORT}/api/tunnels" >"$tmp"; then
+    if ! curl -fsS \
+        --connect-timeout "$DEBIAN_NGROK_API_TIMEOUT_SECONDS" \
+        --max-time "$DEBIAN_NGROK_API_TIMEOUT_SECONDS" \
+        "http://127.0.0.1:${DEBIAN_NGROK_WEB_PORT}/api/tunnels" >"$tmp"; then
         rm -f "$tmp"
         return 1
     fi
@@ -250,9 +255,12 @@ restart_ngrok() {
 }
 
 supervise_services() {
+    ngrok_api_failures=0
+
     while :; do
         if ! process_running "${SSHD_PID:-}" || ! ssh_ready; then
             mark_unready
+            ngrok_api_failures=0
             restart_sshd
             sleep "$DEBIAN_SSH_SUPERVISE_INTERVAL_SECONDS"
             continue
@@ -260,6 +268,7 @@ supervise_services() {
 
         if ! process_running "${NGROK_PID:-}"; then
             mark_unready
+            ngrok_api_failures=0
             restart_ngrok
             sleep "$DEBIAN_SSH_SUPERVISE_INTERVAL_SECONDS"
             continue
@@ -267,9 +276,16 @@ supervise_services() {
 
         public_url="$(ngrok_public_url || true)"
         if [ -n "$public_url" ]; then
+            ngrok_api_failures=0
             mark_ready "$public_url"
         else
-            rm -f "$DEBIAN_SSH_HOME/health/healthz" "$DEBIAN_SSH_HOME/health/ssh.txt" "$DEBIAN_SSH_HOME/health/ngrok-url.txt"
+            ngrok_api_failures=$((ngrok_api_failures + 1))
+            mark_unready
+            if [ "$ngrok_api_failures" -ge "$DEBIAN_NGROK_API_FAILURE_RESTARTS" ]; then
+                echo "ngrok API is not answering; restarting" >&2
+                restart_ngrok
+                ngrok_api_failures=0
+            fi
         fi
 
         sleep "$DEBIAN_SSH_SUPERVISE_INTERVAL_SECONDS"
