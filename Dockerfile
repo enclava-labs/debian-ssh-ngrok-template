@@ -19,9 +19,8 @@ RUN apt-get update \
     && useradd --uid 10001 --gid 10001 --groups sudo --home-dir /home/user --shell /bin/bash user \
     && printf 'user ALL=(ALL) NOPASSWD:ALL\n' >/etc/sudoers.d/user-nopasswd \
     && chmod 0440 /etc/sudoers.d/user-nopasswd \
-    && mkdir -p /home /state /run/sshd \
-    && chown 10001:10001 /state \
-    && ln -s /state/app/home-user /home/user
+    && mkdir -p /home/user /state /run/sshd \
+    && chown 10001:10001 /home/user /state
 
 COPY entrypoint.sh /usr/local/bin/debian-ssh-ngrok-entrypoint
 RUN chmod 0755 /usr/local/bin/debian-ssh-ngrok-entrypoint

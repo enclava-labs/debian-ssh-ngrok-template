@@ -2,13 +2,10 @@
 set -eu
 
 IMAGE_TAG="${IMAGE_TAG:-debian-ssh-ngrok-template:layout-test}"
-EXPECTED_HOME_TARGET="/state/app/home-user"
 
 docker build -t "$IMAGE_TAG" .
 
 docker run --rm --user 0 --entrypoint /bin/sh "$IMAGE_TAG" -eu -c '
-expected_home_target="$1"
-
 if [ ! -d /state ]; then
     echo "expected /state to exist" >&2
     exit 1
@@ -26,9 +23,19 @@ if [ "$state_owner" != "10001:10001" ]; then
     exit 1
 fi
 
-home_target="$(readlink /home/user)"
-if [ "$home_target" != "$expected_home_target" ]; then
-    echo "expected /home/user -> $expected_home_target, found $home_target" >&2
+if [ ! -d /home/user ]; then
+    echo "expected /home/user to be a directory" >&2
+    exit 1
+fi
+
+if [ -L /home/user ]; then
+    echo "expected /home/user not to be a symlink" >&2
+    exit 1
+fi
+
+home_owner="$(stat -c "%u:%g" /home/user)"
+if [ "$home_owner" != "10001:10001" ]; then
+    echo "expected /home/user to be owned by 10001:10001, found $home_owner" >&2
     exit 1
 fi
 
@@ -56,4 +63,4 @@ if ! grep -qx "user ALL=(ALL) NOPASSWD:ALL" /etc/sudoers.d/user-nopasswd; then
     echo "expected passwordless sudoers drop-in for user" >&2
     exit 1
 fi
-' sh "$EXPECTED_HOME_TARGET"
+' sh
