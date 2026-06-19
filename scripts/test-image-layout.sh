@@ -2,7 +2,7 @@
 set -eu
 
 IMAGE_TAG="${IMAGE_TAG:-debian-ssh-ngrok-template:layout-test}"
-EXPECTED_HOME_TARGET="/state/.enclava/config/.runtime/home-user"
+EXPECTED_HOME_TARGET="/state/app/home-user"
 
 docker build -t "$IMAGE_TAG" .
 

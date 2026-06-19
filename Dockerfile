@@ -21,7 +21,7 @@ RUN apt-get update \
     && chmod 0440 /etc/sudoers.d/user-nopasswd \
     && mkdir -p /home /state /run/sshd \
     && chown 10001:10001 /state \
-    && ln -s /state/.enclava/config/.runtime/home-user /home/user
+    && ln -s /state/app/home-user /home/user
 
 COPY entrypoint.sh /usr/local/bin/debian-ssh-ngrok-entrypoint
 RUN chmod 0755 /usr/local/bin/debian-ssh-ngrok-entrypoint

@@ -7,11 +7,9 @@ deployment template.
 - Grants `user` passwordless sudo for package installation inside the running
   instance. The PaaS template must request CAP's managed SSH sudo workload
   profile so setuid sudo and a writable root filesystem are available.
-- Uses CAP's encrypted config handoff runtime directory at
-  `/state/.enclava/config/.runtime/home-user` and exposes it at `/home/user`
-  through an image-level symlink, keeping SSH state, authorized keys, host keys,
-  and user files on the LUKS-backed state volume without a separate app bind
-  mount.
+- Uses CAP's encrypted app state directory at `/state/app/home-user` and
+  exposes it at `/home/user` through an image-level symlink, keeping SSH state,
+  authorized keys, host keys, and user files on the LUKS-backed state volume.
 - Reads CAP config from the encrypted config handoff, currently
   `/state/.enclava/config` for this template.
 - Exposes HTTP health on `8080` for CAP readiness; `/healthz` is only present
