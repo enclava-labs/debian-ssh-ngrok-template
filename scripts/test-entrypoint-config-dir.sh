@@ -32,6 +32,7 @@ docker run -d --name "$container_name" \
     "$IMAGE_TAG" \
     -eu -c '
         mkdir -p /state/app-data/.enclava/config /state/.enclava/config
+        touch /state/app-data/.enclava/config/.ready
         printf "%s\n" test-token > /state/.enclava/config/NGROK_AUTHTOKEN
         touch /state/.enclava/config/.ready
         DEBIAN_SSH_CONFIG_WAIT_SECONDS=1 exec /usr/local/bin/debian-ssh-ngrok-entrypoint

@@ -12,6 +12,7 @@ AUTHORIZED_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ7cAp6elwfMEiNuvLhVyb1xTceS
 : "${DEBIAN_NGROK_API_FAILURE_RESTARTS:=3}"
 : "${DEBIAN_SSH_SUPERVISE_INTERVAL_SECONDS:=5}"
 : "${DEBIAN_STOP_TIMEOUT_SECONDS:=5}"
+: "${ENCLAVA_REQUIRED_CONFIG_KEYS:=NGROK_AUTHTOKEN}"
 : "${DEBIAN_SSH_CAP_CONFIG_DIRS:=/state/app-data/.enclava/config /state/.enclava/config /home/user/.enclava/config}"
 if [ -z "${DEBIAN_SSH_CONFIG_WAIT_SECONDS+x}" ]; then
     if [ -n "${ENCLAVA_CONTAINER_NAME:-}" ]; then
@@ -32,7 +33,14 @@ is_valid_env_key() {
 
 first_config_dir() {
     for dir in $DEBIAN_SSH_CAP_CONFIG_DIRS; do
-        if [ -f "$dir/.ready" ]; then
+        if [ -d "$dir" ] && required_config_present_in_dir "$dir"; then
+            printf '%s\n' "$dir"
+            return 0
+        fi
+    done
+
+    for dir in $DEBIAN_SSH_CAP_CONFIG_DIRS; do
+        if config_dir_ready "$dir"; then
             printf '%s\n' "$dir"
             return 0
         fi
@@ -47,6 +55,44 @@ first_config_dir() {
     return 1
 }
 
+config_dir_ready() {
+    dir="$1"
+    [ -f "$dir/.ready" ] && return 0
+
+    case "$dir" in
+        */.enclava/config)
+            [ -f "${dir%/config}/luks-ready" ] && return 0
+            ;;
+    esac
+    return 1
+}
+
+required_config_present_in_env() {
+    keys="$(printf '%s' "${ENCLAVA_REQUIRED_CONFIG_KEYS:-}" | tr ',' ' ')"
+    [ -n "$keys" ] || return 0
+
+    for key in $keys; do
+        is_valid_env_key "$key" || return 1
+        eval "value=\${$key:-}"
+        [ -n "$value" ] || return 1
+    done
+    return 0
+}
+
+required_config_present_in_dir() {
+    dir="$1"
+    keys="$(printf '%s' "${ENCLAVA_REQUIRED_CONFIG_KEYS:-}" | tr ',' ' ')"
+    [ -n "$keys" ] || return 0
+
+    for key in $keys; do
+        is_valid_env_key "$key" || return 1
+        eval "value=\${$key:-}"
+        [ -n "$value" ] && continue
+        [ -s "$dir/$key" ] || return 1
+    done
+    return 0
+}
+
 wait_for_config() {
     seconds="$DEBIAN_SSH_CONFIG_WAIT_SECONDS"
     case "$seconds" in
@@ -55,12 +101,13 @@ wait_for_config() {
             return 1
             ;;
     esac
+    required_config_present_in_env && return 0
     [ "$seconds" -gt 0 ] || return 0
 
     elapsed=0
     while [ "$elapsed" -lt "$seconds" ]; do
         for dir in $DEBIAN_SSH_CAP_CONFIG_DIRS; do
-            if [ -f "$dir/.ready" ]; then
+            if config_dir_ready "$dir" && required_config_present_in_dir "$dir"; then
                 return 0
             fi
         done
