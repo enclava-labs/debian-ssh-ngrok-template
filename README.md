@@ -11,7 +11,8 @@ deployment template.
   mount.
 - Reads CAP config from the encrypted config handoff, currently
   `/state/.enclava/config` for this template.
-- Exposes HTTP health on `8080` for CAP readiness.
+- Exposes HTTP health on `8080` for CAP readiness; `/healthz` is only present
+  when both local SSH and the ngrok TCP tunnel are live.
 - Runs SSH internally on `2222` because CAP drops low-port bind capability.
 - Starts `ngrok tcp 127.0.0.1:2222` using `NGROK_AUTHTOKEN`.
 - Publishes the discovered ngrok endpoint on `/ngrok-url.txt`, `/ssh.txt`,

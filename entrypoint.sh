@@ -8,6 +8,7 @@ AUTHORIZED_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ7cAp6elwfMEiNuvLhVyb1xTceS
 : "${DEBIAN_SSH_PORT:=2222}"
 : "${DEBIAN_HEALTH_PORT:=8080}"
 : "${DEBIAN_NGROK_WEB_PORT:=4040}"
+: "${DEBIAN_SSH_SUPERVISE_INTERVAL_SECONDS:=5}"
 : "${DEBIAN_SSH_CAP_CONFIG_DIRS:=/state/app-data/.enclava/config /state/.enclava/config /home/lio/.enclava/config}"
 if [ -z "${DEBIAN_SSH_CONFIG_WAIT_SECONDS+x}" ]; then
     if [ -n "${ENCLAVA_CONTAINER_NAME:-}" ]; then
@@ -146,7 +147,7 @@ prepare_home() {
     chmod 644 "$DEBIAN_SSH_HOME/.ssh/ssh_host_ed25519_key.pub"
 
     write_sshd_config
-    printf 'ok\n' >"$DEBIAN_SSH_HOME/health/healthz"
+    mark_unready
 }
 
 start_health() {
@@ -155,6 +156,7 @@ start_health() {
 }
 
 start_sshd() {
+    rm -f "$DEBIAN_SSH_HOME/.ssh/sshd.pid"
     /usr/sbin/sshd -D -e -f "$DEBIAN_SSH_HOME/.ssh/sshd_config" &
     SSHD_PID="$!"
 }
@@ -176,33 +178,107 @@ EOF
     NGROK_PID="$!"
 }
 
-publish_ngrok_status() {
-    (
-        while :; do
-            tmp="$DEBIAN_SSH_HOME/health/ngrok.json.tmp"
-            if curl -fsS "http://127.0.0.1:${DEBIAN_NGROK_WEB_PORT}/api/tunnels" >"$tmp"; then
-                mv "$tmp" "$DEBIAN_SSH_HOME/health/ngrok.json"
-                public_url="$(jq -r '.tunnels[]?.public_url // empty' "$DEBIAN_SSH_HOME/health/ngrok.json" | awk '/^tcp:\/\// { print; exit }')"
-                if [ -n "$public_url" ]; then
-                    endpoint="${public_url#tcp://}"
-                    host="${endpoint%:*}"
-                    port="${endpoint##*:}"
-                    printf '%s\n' "$public_url" >"$DEBIAN_SSH_HOME/health/ngrok-url.txt"
-                    printf 'ssh -p %s %s@%s\n' "$port" "$DEBIAN_SSH_USER" "$host" >"$DEBIAN_SSH_HOME/health/ssh.txt"
-                fi
-            else
-                rm -f "$tmp"
-            fi
-            sleep 5
-        done
-    ) &
-    NGROK_STATUS_PID="$!"
+mark_unready() {
+    rm -f \
+        "$DEBIAN_SSH_HOME/health/healthz" \
+        "$DEBIAN_SSH_HOME/health/ssh.txt" \
+        "$DEBIAN_SSH_HOME/health/ngrok-url.txt" \
+        "$DEBIAN_SSH_HOME/health/ngrok.json" \
+        "$DEBIAN_SSH_HOME/health/ngrok.json.tmp"
+}
+
+mark_ready() {
+    public_url="$1"
+    endpoint="${public_url#tcp://}"
+    host="${endpoint%:*}"
+    port="${endpoint##*:}"
+
+    printf '%s\n' "$public_url" >"$DEBIAN_SSH_HOME/health/ngrok-url.txt.tmp"
+    printf 'ssh -p %s %s@%s\n' "$port" "$DEBIAN_SSH_USER" "$host" >"$DEBIAN_SSH_HOME/health/ssh.txt.tmp"
+    printf 'ok\n' >"$DEBIAN_SSH_HOME/health/healthz.tmp"
+    mv "$DEBIAN_SSH_HOME/health/ngrok-url.txt.tmp" "$DEBIAN_SSH_HOME/health/ngrok-url.txt"
+    mv "$DEBIAN_SSH_HOME/health/ssh.txt.tmp" "$DEBIAN_SSH_HOME/health/ssh.txt"
+    mv "$DEBIAN_SSH_HOME/health/healthz.tmp" "$DEBIAN_SSH_HOME/health/healthz"
+}
+
+process_running() {
+    pid="${1:-}"
+    [ -n "$pid" ] || return 1
+    kill -0 "$pid" 2>/dev/null || return 1
+    stat="$(ps -o stat= -p "$pid" 2>/dev/null || true)"
+    [ -n "$stat" ] || return 1
+    case "$stat" in
+        *Z*)
+            return 1
+            ;;
+    esac
+    return 0
+}
+
+stop_process() {
+    pid="${1:-}"
+    [ -n "$pid" ] || return 0
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+}
+
+ssh_ready() {
+    ssh-keyscan -T 2 -t ed25519 -p "$DEBIAN_SSH_PORT" 127.0.0.1 >/dev/null 2>&1
+}
+
+ngrok_public_url() {
+    tmp="$DEBIAN_SSH_HOME/health/ngrok.json.tmp"
+    if ! curl -fsS "http://127.0.0.1:${DEBIAN_NGROK_WEB_PORT}/api/tunnels" >"$tmp"; then
+        rm -f "$tmp"
+        return 1
+    fi
+
+    mv "$tmp" "$DEBIAN_SSH_HOME/health/ngrok.json"
+    jq -r '.tunnels[]?.public_url // empty' "$DEBIAN_SSH_HOME/health/ngrok.json" | awk '/^tcp:\/\// { print; exit }'
+}
+
+restart_sshd() {
+    echo "sshd is not answering; restarting" >&2
+    stop_process "${SSHD_PID:-}"
+    start_sshd
+}
+
+restart_ngrok() {
+    echo "ngrok is not running; restarting" >&2
+    stop_process "${NGROK_PID:-}"
+    start_ngrok
+}
+
+supervise_services() {
+    while :; do
+        if ! process_running "${SSHD_PID:-}" || ! ssh_ready; then
+            mark_unready
+            restart_sshd
+            sleep "$DEBIAN_SSH_SUPERVISE_INTERVAL_SECONDS"
+            continue
+        fi
+
+        if ! process_running "${NGROK_PID:-}"; then
+            mark_unready
+            restart_ngrok
+            sleep "$DEBIAN_SSH_SUPERVISE_INTERVAL_SECONDS"
+            continue
+        fi
+
+        public_url="$(ngrok_public_url || true)"
+        if [ -n "$public_url" ]; then
+            mark_ready "$public_url"
+        else
+            rm -f "$DEBIAN_SSH_HOME/health/healthz" "$DEBIAN_SSH_HOME/health/ssh.txt" "$DEBIAN_SSH_HOME/health/ngrok-url.txt"
+        fi
+
+        sleep "$DEBIAN_SSH_SUPERVISE_INTERVAL_SECONDS"
+    done
 }
 
 cleanup() {
     [ -z "${HEALTH_PID:-}" ] || kill "$HEALTH_PID" 2>/dev/null || true
     [ -z "${SSHD_PID:-}" ] || kill "$SSHD_PID" 2>/dev/null || true
-    [ -z "${NGROK_STATUS_PID:-}" ] || kill "$NGROK_STATUS_PID" 2>/dev/null || true
     [ -z "${NGROK_PID:-}" ] || kill "$NGROK_PID" 2>/dev/null || true
 }
 
@@ -215,5 +291,4 @@ load_cap_config
 require_nonempty_env NGROK_AUTHTOKEN
 start_sshd
 start_ngrok
-publish_ngrok_status
-wait "$NGROK_PID"
+supervise_services
