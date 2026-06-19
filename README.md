@@ -3,9 +3,12 @@
 Public image source for the Enclava PaaS `debian-ssh-ngrok` hosted
 deployment template.
 
-- Runs as UID/GID `10001`, matching CAP's unprivileged workload container.
+- Runs as Linux user `user` with UID/GID `10001`.
+- Grants `user` passwordless sudo for package installation inside the running
+  instance. The PaaS template must request CAP's managed SSH sudo workload
+  profile so setuid sudo and a writable root filesystem are available.
 - Uses CAP's encrypted config handoff runtime directory at
-  `/state/.enclava/config/.runtime/home-lio` and exposes it at `/home/lio`
+  `/state/.enclava/config/.runtime/home-user` and exposes it at `/home/user`
   through an image-level symlink, keeping SSH state, authorized keys, host keys,
   and user files on the LUKS-backed state volume without a separate app bind
   mount.

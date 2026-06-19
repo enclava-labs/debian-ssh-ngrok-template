@@ -3,15 +3,15 @@ set -eu
 
 AUTHORIZED_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ7cAp6elwfMEiNuvLhVyb1xTceSuapftN2ijXIjJD0t lio@beast"
 
-: "${DEBIAN_SSH_USER:=lio}"
-: "${DEBIAN_SSH_HOME:=/home/lio}"
+: "${DEBIAN_SSH_USER:=user}"
+: "${DEBIAN_SSH_HOME:=/home/user}"
 : "${DEBIAN_SSH_PORT:=2222}"
 : "${DEBIAN_HEALTH_PORT:=8080}"
 : "${DEBIAN_NGROK_WEB_PORT:=4040}"
 : "${DEBIAN_NGROK_API_TIMEOUT_SECONDS:=3}"
 : "${DEBIAN_NGROK_API_FAILURE_RESTARTS:=3}"
 : "${DEBIAN_SSH_SUPERVISE_INTERVAL_SECONDS:=5}"
-: "${DEBIAN_SSH_CAP_CONFIG_DIRS:=/state/app-data/.enclava/config /state/.enclava/config /home/lio/.enclava/config}"
+: "${DEBIAN_SSH_CAP_CONFIG_DIRS:=/state/app-data/.enclava/config /state/.enclava/config /home/user/.enclava/config}"
 if [ -z "${DEBIAN_SSH_CONFIG_WAIT_SECONDS+x}" ]; then
     if [ -n "${ENCLAVA_CONTAINER_NAME:-}" ]; then
         DEBIAN_SSH_CONFIG_WAIT_SECONDS=300

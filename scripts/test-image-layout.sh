@@ -2,11 +2,11 @@
 set -eu
 
 IMAGE_TAG="${IMAGE_TAG:-debian-ssh-ngrok-template:layout-test}"
-EXPECTED_HOME_TARGET="/state/.enclava/config/.runtime/home-lio"
+EXPECTED_HOME_TARGET="/state/.enclava/config/.runtime/home-user"
 
 docker build -t "$IMAGE_TAG" .
 
-docker run --rm --entrypoint /bin/sh "$IMAGE_TAG" -eu -c '
+docker run --rm --user 0 --entrypoint /bin/sh "$IMAGE_TAG" -eu -c '
 expected_home_target="$1"
 
 if [ ! -d /state ]; then
@@ -26,9 +26,34 @@ if [ "$state_owner" != "10001:10001" ]; then
     exit 1
 fi
 
-home_target="$(readlink /home/lio)"
+home_target="$(readlink /home/user)"
 if [ "$home_target" != "$expected_home_target" ]; then
-    echo "expected /home/lio -> $expected_home_target, found $home_target" >&2
+    echo "expected /home/user -> $expected_home_target, found $home_target" >&2
+    exit 1
+fi
+
+user_entry="$(getent passwd user)"
+case "$user_entry" in
+    user:x:10001:10001:*)
+        ;;
+    *)
+        echo "expected user passwd entry with uid/gid 10001, found $user_entry" >&2
+        exit 1
+        ;;
+esac
+
+if ! id -nG user | tr " " "\n" | grep -qx sudo; then
+    echo "expected user to be in sudo group" >&2
+    exit 1
+fi
+
+if [ "$(stat -c "%a" /etc/sudoers.d/user-nopasswd)" != "440" ]; then
+    echo "expected /etc/sudoers.d/user-nopasswd mode 440" >&2
+    exit 1
+fi
+
+if ! grep -qx "user ALL=(ALL) NOPASSWD:ALL" /etc/sudoers.d/user-nopasswd; then
+    echo "expected passwordless sudoers drop-in for user" >&2
     exit 1
 fi
 ' sh "$EXPECTED_HOME_TARGET"

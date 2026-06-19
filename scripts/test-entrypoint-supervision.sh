@@ -35,15 +35,15 @@ docker run -d --name "$container_name" \
     --entrypoint /bin/sh \
     "$IMAGE_TAG" \
     -eu -c '
-        mkdir -p /state/.enclava/config/.runtime/home-lio/health /state/.enclava/config
-        printf "%s\n" stale-endpoint > /state/.enclava/config/.runtime/home-lio/health/ssh.txt
+        mkdir -p /state/.enclava/config/.runtime/home-user/health /state/.enclava/config
+        printf "%s\n" stale-endpoint > /state/.enclava/config/.runtime/home-user/health/ssh.txt
         printf "%s\n" test-token > /state/.enclava/config/NGROK_AUTHTOKEN
         touch /state/.enclava/config/.ready
         DEBIAN_SSH_CONFIG_WAIT_SECONDS=1 exec /usr/local/bin/debian-ssh-ngrok-entrypoint
     ' >/dev/null
 
 sleep 2
-if docker exec "$container_name" test -e /home/lio/health/ssh.txt; then
+if docker exec "$container_name" test -e /home/user/health/ssh.txt; then
     docker logs "$container_name" >&2 || true
     echo "expected stale ssh.txt to be removed before ngrok publishes a fresh endpoint" >&2
     exit 1
@@ -61,7 +61,7 @@ if ! docker exec "$container_name" ssh-keyscan -T 2 -t ed25519 -p 2222 127.0.0.1
     exit 1
 fi
 
-docker exec "$container_name" /bin/sh -eu -c 'kill "$(cat /home/lio/.ssh/sshd.pid)"'
+docker exec "$container_name" /bin/sh -eu -c 'kill "$(cat /home/user/.ssh/sshd.pid)"'
 
 for _ in $(seq 1 30); do
     if docker exec "$container_name" ssh-keyscan -T 2 -t ed25519 -p 2222 127.0.0.1 >/dev/null 2>&1; then

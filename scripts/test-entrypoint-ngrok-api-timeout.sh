@@ -67,22 +67,22 @@ docker run -d --name "$container_name" \
     ' >/dev/null
 
 for _ in $(seq 1 20); do
-    if docker exec "$container_name" test -e /home/lio/health/healthz; then
+    if docker exec "$container_name" test -e /home/user/health/healthz; then
         break
     fi
     sleep 1
 done
-if ! docker exec "$container_name" test -e /home/lio/health/healthz; then
+if ! docker exec "$container_name" test -e /home/user/health/healthz; then
     docker logs "$container_name" >&2 || true
     echo "expected entrypoint to publish initial healthz before ngrok API timeout test" >&2
     exit 1
 fi
 
-initial_mtime="$(docker exec "$container_name" stat -c %Y /home/lio/health/healthz)"
+initial_mtime="$(docker exec "$container_name" stat -c %Y /home/user/health/healthz)"
 sleep 8
 
-if docker exec "$container_name" test -e /home/lio/health/healthz; then
-    current_mtime="$(docker exec "$container_name" stat -c %Y /home/lio/health/healthz)"
+if docker exec "$container_name" test -e /home/user/health/healthz; then
+    current_mtime="$(docker exec "$container_name" stat -c %Y /home/user/health/healthz)"
     if [ "$current_mtime" = "$initial_mtime" ]; then
         docker logs "$container_name" >&2 || true
         echo "expected hung ngrok API probe not to leave stale healthz published" >&2
