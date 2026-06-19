@@ -88,7 +88,7 @@ required_config_present_in_dir() {
         is_valid_env_key "$key" || return 1
         eval "value=\${$key:-}"
         [ -n "$value" ] && continue
-        [ -s "$dir/$key" ] || return 1
+        [ -r "$dir/$key" ] && [ -s "$dir/$key" ] || return 1
     done
     return 0
 }
@@ -124,9 +124,10 @@ load_cap_config() {
 
     for path in "$dir"/*; do
         [ -f "$path" ] || continue
+        [ -r "$path" ] || continue
         key="${path##*/}"
         is_valid_env_key "$key" || continue
-        value="$(cat "$path")"
+        value="$(cat "$path")" || return 1
         export "$key=$value"
     done
 }
