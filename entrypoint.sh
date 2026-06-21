@@ -23,6 +23,7 @@ AUTHORIZED_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ7cAp6elwfMEiNuvLhVyb1xTceS
 : "${ENCLAVA_REQUIRED_CONFIG_KEYS:=NGROK_AUTHTOKEN}"
 : "${NGROK_TCP_URL:=}"
 : "${DEBIAN_SSH_CAP_CONFIG_DIRS:=/state/app-data/.enclava/config /state/.enclava/config /home/user/.enclava/config}"
+: "${DEBIAN_SSH_PERSISTED_CONFIG_DIR:=/state/app-data/debian-ssh-ngrok/config}"
 if [ -z "${DEBIAN_SSH_CONFIG_WAIT_SECONDS+x}" ]; then
     if [ -n "${ENCLAVA_CONTAINER_NAME:-}" ]; then
         DEBIAN_SSH_CONFIG_WAIT_SECONDS=300
@@ -162,7 +163,7 @@ config_dir_ready() {
 }
 
 required_config_present_in_env() {
-    keys="$(printf '%s' "${ENCLAVA_REQUIRED_CONFIG_KEYS:-}" | tr ',' ' ')"
+    keys="$(required_config_keys)"
     [ -n "$keys" ] || return 0
 
     for key in $keys; do
@@ -175,7 +176,7 @@ required_config_present_in_env() {
 
 required_config_present_in_dir() {
     dir="$1"
-    keys="$(printf '%s' "${ENCLAVA_REQUIRED_CONFIG_KEYS:-}" | tr ',' ' ')"
+    keys="$(required_config_keys)"
     [ -n "$keys" ] || return 0
 
     for key in $keys; do
@@ -212,6 +213,10 @@ wait_for_config() {
     echo "CAP config was not marked ready after ${seconds}s; continuing with current environment" >&2
 }
 
+required_config_keys() {
+    printf '%s' "${ENCLAVA_REQUIRED_CONFIG_KEYS:-}" | tr ',' ' '
+}
+
 load_cap_config() {
     dir="$(first_config_dir || true)"
     [ -n "${dir:-}" ] || return 0
@@ -223,6 +228,57 @@ load_cap_config() {
         is_valid_env_key "$key" || continue
         value="$(cat "$path")" || return 1
         export "$key=$value"
+    done
+}
+
+load_persisted_config() {
+    keys="$(required_config_keys)"
+    [ -n "$keys" ] || return 0
+
+    for key in $keys; do
+        is_valid_env_key "$key" || continue
+        eval "value=\${$key:-}"
+        [ -n "$value" ] && continue
+        path="$DEBIAN_SSH_PERSISTED_CONFIG_DIR/$key"
+        [ -r "$path" ] && [ -s "$path" ] || continue
+        value="$(cat "$path")" || continue
+        [ -n "$value" ] || continue
+        export "$key=$value"
+    done
+}
+
+persist_config_key() {
+    key="$1"
+    value="$2"
+    tmp="$DEBIAN_SSH_PERSISTED_CONFIG_DIR/$key.tmp.$$"
+
+    mkdir -p "$DEBIAN_SSH_PERSISTED_CONFIG_DIR" 2>/dev/null || {
+        echo "could not create persisted config dir ${DEBIAN_SSH_PERSISTED_CONFIG_DIR}" >&2
+        return 0
+    }
+    chmod 700 "$DEBIAN_SSH_PERSISTED_CONFIG_DIR" 2>/dev/null || true
+    if ! (umask 077 && printf '%s\n' "$value" >"$tmp"); then
+        echo "could not persist config key ${key}" >&2
+        rm -f "$tmp" 2>/dev/null || true
+        return 0
+    fi
+    chmod 600 "$tmp" 2>/dev/null || true
+    mv "$tmp" "$DEBIAN_SSH_PERSISTED_CONFIG_DIR/$key" 2>/dev/null || {
+        echo "could not install persisted config key ${key}" >&2
+        rm -f "$tmp" 2>/dev/null || true
+        return 0
+    }
+}
+
+persist_required_config() {
+    keys="$(required_config_keys)"
+    [ -n "$keys" ] || return 0
+
+    for key in $keys; do
+        is_valid_env_key "$key" || continue
+        eval "value=\${$key:-}"
+        [ -n "$value" ] || continue
+        persist_config_key "$key" "$value"
     done
 }
 
@@ -363,6 +419,7 @@ mark_ready() {
     mv "$DEBIAN_SSH_HOME/health/ngrok-url.txt.tmp" "$DEBIAN_SSH_HOME/health/ngrok-url.txt"
     mv "$DEBIAN_SSH_HOME/health/ssh.txt.tmp" "$DEBIAN_SSH_HOME/health/ssh.txt"
     mv "$DEBIAN_SSH_HOME/health/healthz.tmp" "$DEBIAN_SSH_HOME/health/healthz"
+    rm -f "$DEBIAN_SSH_HOME/health/startup-error.txt"
 }
 
 process_running() {
@@ -573,7 +630,9 @@ prepare_home || fail_stay_alive "prepare_home failed"
 start_health || fail_stay_alive "health server failed to start"
 wait_for_config || fail_stay_alive "CAP config wait failed"
 load_cap_config || fail_stay_alive "CAP config load failed"
+load_persisted_config || fail_stay_alive "persisted config load failed"
 require_nonempty_env NGROK_AUTHTOKEN || fail_stay_alive "NGROK_AUTHTOKEN is required"
+persist_required_config || true
 start_sshd || fail_stay_alive "sshd failed to start"
 start_ngrok || fail_stay_alive "ngrok failed to start"
 supervise_services
