@@ -12,6 +12,10 @@ AUTHORIZED_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ7cAp6elwfMEiNuvLhVyb1xTceS
 : "${DEBIAN_NGROK_API_FAILURE_RESTARTS:=3}"
 : "${DEBIAN_NGROK_UNREADY_EXIT_SECONDS:=300}"
 : "${DEBIAN_NGROK_UNREADY_ACTION:=exit}"
+: "${DEBIAN_SSH_RESTART_WRAPPER:=0}"
+: "${DEBIAN_SSH_RESTART_DELAY_SECONDS:=2}"
+: "${DEBIAN_SSH_WRAPPED:=0}"
+: "${DEBIAN_SSH_WRAPPER_RESTART_COUNT:=0}"
 : "${DEBIAN_SSH_SUPERVISE_INTERVAL_SECONDS:=5}"
 : "${DEBIAN_STOP_TIMEOUT_SECONDS:=5}"
 : "${ENCLAVA_REQUIRED_CONFIG_KEYS:=NGROK_AUTHTOKEN}"
@@ -23,6 +27,39 @@ if [ -z "${DEBIAN_SSH_CONFIG_WAIT_SECONDS+x}" ]; then
     else
         DEBIAN_SSH_CONFIG_WAIT_SECONDS=0
     fi
+fi
+
+run_restart_wrapper() {
+    child_pid=""
+
+    terminate_wrapper() {
+        status="$1"
+        trap - INT TERM
+        if [ -n "${child_pid:-}" ]; then
+            kill "$child_pid" 2>/dev/null || true
+            wait "$child_pid" 2>/dev/null || true
+        fi
+        exit "$status"
+    }
+
+    trap 'terminate_wrapper 130' INT
+    trap 'terminate_wrapper 143' TERM
+
+    restart_count=0
+    while :; do
+        DEBIAN_SSH_WRAPPED=1 DEBIAN_SSH_WRAPPER_RESTART_COUNT="$restart_count" "$0" "$@" &
+        child_pid="$!"
+        wait "$child_pid"
+        status="$?"
+        child_pid=""
+        echo "debian SSH entrypoint exited with status ${status}; restarting in ${DEBIAN_SSH_RESTART_DELAY_SECONDS}s" >&2
+        sleep "$DEBIAN_SSH_RESTART_DELAY_SECONDS"
+        restart_count=$((restart_count + 1))
+    done
+}
+
+if [ "$DEBIAN_SSH_RESTART_WRAPPER" = "1" ] && [ "$DEBIAN_SSH_WRAPPED" != "1" ]; then
+    run_restart_wrapper "$@"
 fi
 
 is_valid_env_key() {
