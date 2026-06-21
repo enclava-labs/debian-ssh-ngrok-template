@@ -219,6 +219,9 @@ start_ngrok() {
     export HOME="$DEBIAN_SSH_HOME"
     export XDG_CONFIG_HOME="$DEBIAN_SSH_HOME/.config"
     export XDG_CACHE_HOME="$DEBIAN_SSH_HOME/.cache"
+    rm -rf "$DEBIAN_SSH_HOME/.cache/ngrok"
+    mkdir -p "$DEBIAN_SSH_HOME/.cache/ngrok" || return 1
+    chmod 700 "$DEBIAN_SSH_HOME/.cache/ngrok" || return 1
     cat >"$DEBIAN_SSH_HOME/.config/ngrok/ngrok.yml" <<EOF
 version: 3
 agent:
