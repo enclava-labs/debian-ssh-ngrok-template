@@ -14,6 +14,8 @@ AUTHORIZED_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ7cAp6elwfMEiNuvLhVyb1xTceS
 : "${DEBIAN_NGROK_UNREADY_ACTION:=exit}"
 : "${DEBIAN_SSH_RESTART_WRAPPER:=0}"
 : "${DEBIAN_SSH_RESTART_DELAY_SECONDS:=2}"
+: "${DEBIAN_SSH_RESTART_WRAPPER_CHECK_SECONDS:=5}"
+: "${DEBIAN_SSH_RESTART_WRAPPER_UNREADY_SECONDS:=60}"
 : "${DEBIAN_SSH_WRAPPED:=0}"
 : "${DEBIAN_SSH_WRAPPER_RESTART_COUNT:=0}"
 : "${DEBIAN_SSH_SUPERVISE_INTERVAL_SECONDS:=5}"
@@ -32,11 +34,47 @@ fi
 run_restart_wrapper() {
     child_pid=""
 
+    wrapper_child_running() {
+        pid="${1:-}"
+        [ -n "$pid" ] || return 1
+        kill -0 "$pid" 2>/dev/null || return 1
+        stat="$(ps -o stat= -p "$pid" 2>/dev/null || true)"
+        [ -n "$stat" ] || return 1
+        case "$stat" in
+            *Z*)
+                return 1
+                ;;
+        esac
+        return 0
+    }
+
+    wrapper_health_ready() {
+        curl -fsS \
+            --connect-timeout 2 \
+            --max-time 2 \
+            "http://127.0.0.1:${DEBIAN_HEALTH_PORT}/healthz" >/dev/null 2>&1
+    }
+
+    stop_wrapper_child() {
+        pid="${1:-}"
+        [ -n "$pid" ] || return 0
+        kill "$pid" 2>/dev/null || true
+        elapsed=0
+        while wrapper_child_running "$pid"; do
+            if [ "$elapsed" -ge "$DEBIAN_STOP_TIMEOUT_SECONDS" ]; then
+                kill -KILL "$pid" 2>/dev/null || true
+                break
+            fi
+            sleep 1
+            elapsed=$((elapsed + 1))
+        done
+    }
+
     terminate_wrapper() {
         status="$1"
         trap - INT TERM
         if [ -n "${child_pid:-}" ]; then
-            kill "$child_pid" 2>/dev/null || true
+            stop_wrapper_child "$child_pid"
             wait "$child_pid" 2>/dev/null || true
         fi
         exit "$status"
@@ -49,6 +87,22 @@ run_restart_wrapper() {
     while :; do
         DEBIAN_SSH_WRAPPED=1 DEBIAN_SSH_WRAPPER_RESTART_COUNT="$restart_count" "$0" "$@" &
         child_pid="$!"
+        wrapper_seen_ready=0
+        wrapper_unready_seconds=0
+        while wrapper_child_running "$child_pid"; do
+            if wrapper_health_ready; then
+                wrapper_seen_ready=1
+                wrapper_unready_seconds=0
+            elif [ "$wrapper_seen_ready" = "1" ]; then
+                wrapper_unready_seconds=$((wrapper_unready_seconds + DEBIAN_SSH_RESTART_WRAPPER_CHECK_SECONDS))
+                if [ "$wrapper_unready_seconds" -ge "$DEBIAN_SSH_RESTART_WRAPPER_UNREADY_SECONDS" ]; then
+                    echo "debian SSH entrypoint stayed unready for ${wrapper_unready_seconds}s; restarting child" >&2
+                    stop_wrapper_child "$child_pid"
+                    break
+                fi
+            fi
+            sleep "$DEBIAN_SSH_RESTART_WRAPPER_CHECK_SECONDS"
+        done
         wait "$child_pid"
         status="$?"
         child_pid=""
