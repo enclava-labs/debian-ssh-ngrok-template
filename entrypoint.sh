@@ -11,6 +11,7 @@ AUTHORIZED_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ7cAp6elwfMEiNuvLhVyb1xTceS
 : "${DEBIAN_NGROK_API_TIMEOUT_SECONDS:=3}"
 : "${DEBIAN_NGROK_API_FAILURE_RESTARTS:=3}"
 : "${DEBIAN_NGROK_UNREADY_EXIT_SECONDS:=300}"
+: "${DEBIAN_NGROK_UNREADY_ACTION:=exit}"
 : "${DEBIAN_SSH_SUPERVISE_INTERVAL_SECONDS:=5}"
 : "${DEBIAN_STOP_TIMEOUT_SECONDS:=5}"
 : "${ENCLAVA_REQUIRED_CONFIG_KEYS:=NGROK_AUTHTOKEN}"
@@ -353,12 +354,36 @@ restart_ngrok() {
     start_ngrok
 }
 
+reexec_entrypoint() {
+    echo "ngrok stayed unready for ${ngrok_unready_seconds}s; re-execing entrypoint" >&2
+    trap - INT TERM EXIT
+    stop_process "${NGROK_PID:-}" || true
+    stop_process "${SSHD_PID:-}" || true
+    stop_process "${HEALTH_PID:-}" || true
+    DEBIAN_SSH_REEXEC_COUNT=$((DEBIAN_SSH_REEXEC_COUNT + 1))
+    export DEBIAN_SSH_REEXEC_COUNT
+    exec "$0"
+    echo "failed to re-exec entrypoint" >&2
+    exit 1
+}
+
 record_ngrok_unready() {
     ngrok_unready_seconds=$((ngrok_unready_seconds + DEBIAN_SSH_SUPERVISE_INTERVAL_SECONDS))
     if [ "$DEBIAN_NGROK_UNREADY_EXIT_SECONDS" -gt 0 ] \
         && [ "$ngrok_unready_seconds" -ge "$DEBIAN_NGROK_UNREADY_EXIT_SECONDS" ]; then
-        echo "ngrok stayed unready for ${ngrok_unready_seconds}s; exiting for container restart" >&2
-        exit 1
+        case "$DEBIAN_NGROK_UNREADY_ACTION" in
+            exit)
+                echo "ngrok stayed unready for ${ngrok_unready_seconds}s; exiting for container restart" >&2
+                exit 1
+                ;;
+            reexec)
+                reexec_entrypoint
+                ;;
+            *)
+                echo "invalid DEBIAN_NGROK_UNREADY_ACTION: ${DEBIAN_NGROK_UNREADY_ACTION}" >&2
+                exit 1
+                ;;
+        esac
     fi
 }
 
@@ -373,6 +398,7 @@ sleep_supervise_interval() {
 supervise_services() {
     ngrok_api_failures=0
     ngrok_unready_seconds=0
+    DEBIAN_SSH_REEXEC_COUNT="${DEBIAN_SSH_REEXEC_COUNT:-0}"
 
     while :; do
         if ! process_running "${HEALTH_PID:-}"; then
