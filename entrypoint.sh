@@ -652,19 +652,8 @@ stop_sshd() {
 }
 
 ssh_ready() {
-    [ -r "$DEBIAN_SSH_READY_KEY" ] || return 1
-    ssh -F /dev/null \
-        -i "$DEBIAN_SSH_READY_KEY" \
-        -o BatchMode=yes \
-        -o ConnectTimeout=3 \
-        -o ConnectionAttempts=1 \
-        -o IdentitiesOnly=yes \
-        -o LogLevel=ERROR \
-        -o StrictHostKeyChecking=no \
-        -o UserKnownHostsFile=/dev/null \
-        -p "$DEBIAN_SSH_PORT" \
-        "${DEBIAN_SSH_USER}@127.0.0.1" \
-        true </dev/null >/dev/null 2>&1
+    ssh-keyscan -T 3 -t ed25519 -p "$DEBIAN_SSH_PORT" 127.0.0.1 2>/dev/null \
+        | awk '$2 == "ssh-ed25519" { found=1 } END { exit found ? 0 : 1 }'
 }
 
 ngrok_public_url() {

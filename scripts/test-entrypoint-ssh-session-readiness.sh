@@ -28,6 +28,7 @@ STUB
 
 cat >"$stub_dir/ssh" <<'STUB'
 #!/bin/sh
+touch /tmp/ssh-was-called
 exit 255
 STUB
 
@@ -45,18 +46,21 @@ docker run -d --name "$container_name" \
     -v "$stub_dir/ssh:/usr/local/bin/ssh:ro" \
     "$IMAGE_TAG" >/dev/null
 
-if timeout 15 docker wait "$container_name" >/tmp/debian-ssh-ngrok-session-readiness-status; then
-    status="$(cat /tmp/debian-ssh-ngrok-session-readiness-status)"
-    rm -f /tmp/debian-ssh-ngrok-session-readiness-status
-    if [ "$status" = "0" ]; then
-        docker logs "$container_name" >&2 || true
-        echo "expected failed SSH session readiness to exit non-zero" >&2
-        exit 1
+for _ in $(seq 1 15); do
+    if docker exec "$container_name" curl -fsS http://127.0.0.1:8080/healthz >/dev/null 2>&1; then
+        break
     fi
-    exit 0
+    sleep 1
+done
+
+if ! docker exec "$container_name" curl -fsS http://127.0.0.1:8080/healthz >/dev/null 2>&1; then
+    docker logs "$container_name" >&2 || true
+    echo "expected SSH readiness to use ssh-keyscan instead of a full SSH session" >&2
+    exit 1
 fi
 
-rm -f /tmp/debian-ssh-ngrok-session-readiness-status
-docker logs "$container_name" >&2 || true
-echo "expected failed SSH session readiness to withdraw health and exit" >&2
-exit 1
+if docker exec "$container_name" test -e /tmp/ssh-was-called; then
+    docker logs "$container_name" >&2 || true
+    echo "expected SSH readiness not to invoke the ssh client" >&2
+    exit 1
+fi

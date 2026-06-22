@@ -30,6 +30,7 @@ count=$((count + 1))
 printf '%s\n' "$count" > "$count_file"
 if [ "$count" -le 3 ]; then
     printf '# 127.0.0.1:2222 SSH-2.0-stub\n'
+    printf '[127.0.0.1]:2222 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeProbeKey\n'
     exit 0
 fi
 exit 1
