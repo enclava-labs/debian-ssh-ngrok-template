@@ -86,13 +86,25 @@ run_restart_wrapper() {
             sleep 1
             elapsed=$((elapsed + 1))
         done
+
+        elapsed=0
+        while wrapper_child_running "$pid"; do
+            if [ "$elapsed" -ge 2 ]; then
+                echo "wrapper child ${pid} still running after SIGKILL" >&2
+                return 1
+            fi
+            sleep 1
+            elapsed=$((elapsed + 1))
+        done
+
+        return 0
     }
 
     terminate_wrapper() {
         status="$1"
         trap - INT TERM
         if [ -n "${child_pid:-}" ]; then
-            stop_wrapper_child "$child_pid"
+            stop_wrapper_child "$child_pid" || exit "$status"
             wait "$child_pid" 2>/dev/null || true
         fi
         exit "$status"
@@ -120,7 +132,10 @@ run_restart_wrapper() {
                     wrapper_unready_seconds=$((wrapper_unready_seconds + DEBIAN_SSH_RESTART_WRAPPER_CHECK_SECONDS))
                     if [ "$wrapper_unready_seconds" -ge "$DEBIAN_SSH_RESTART_WRAPPER_UNREADY_SECONDS" ]; then
                         echo "debian SSH entrypoint stayed unready for ${wrapper_unready_seconds}s; restarting child" >&2
-                        stop_wrapper_child "$child_pid"
+                        if ! stop_wrapper_child "$child_pid"; then
+                            echo "wrapper child ${child_pid} did not stop; exiting for container restart" >&2
+                            exit 1
+                        fi
                         break
                     fi
                 fi
