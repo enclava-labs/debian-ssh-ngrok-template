@@ -18,6 +18,7 @@ AUTHORIZED_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ7cAp6elwfMEiNuvLhVyb1xTceS
 : "${DEBIAN_SSH_RESTART_WRAPPER_UNREADY_SECONDS:=60}"
 : "${DEBIAN_SSH_WRAPPED:=0}"
 : "${DEBIAN_SSH_WRAPPER_RESTART_COUNT:=0}"
+: "${DEBIAN_SSH_READY_MARKER:=/tmp/debian-ssh-ngrok-ready-seen}"
 : "${DEBIAN_SSH_SUPERVISE_INTERVAL_SECONDS:=5}"
 : "${DEBIAN_STOP_TIMEOUT_SECONDS:=5}"
 : "${ENCLAVA_REQUIRED_CONFIG_KEYS:=NGROK_AUTHTOKEN}"
@@ -56,6 +57,10 @@ run_restart_wrapper() {
             "http://127.0.0.1:${DEBIAN_HEALTH_PORT}/healthz" >/dev/null 2>&1
     }
 
+    wrapper_ready_seen() {
+        [ -f "$DEBIAN_SSH_READY_MARKER" ]
+    }
+
     stop_wrapper_child() {
         pid="${1:-}"
         [ -n "$pid" ] || return 0
@@ -86,6 +91,7 @@ run_restart_wrapper() {
 
     restart_count=0
     while :; do
+        rm -f "$DEBIAN_SSH_READY_MARKER" 2>/dev/null || true
         DEBIAN_SSH_WRAPPED=1 DEBIAN_SSH_WRAPPER_RESTART_COUNT="$restart_count" "$0" "$@" &
         child_pid="$!"
         wrapper_seen_ready=0
@@ -94,12 +100,17 @@ run_restart_wrapper() {
             if wrapper_health_ready; then
                 wrapper_seen_ready=1
                 wrapper_unready_seconds=0
-            elif [ "$wrapper_seen_ready" = "1" ]; then
-                wrapper_unready_seconds=$((wrapper_unready_seconds + DEBIAN_SSH_RESTART_WRAPPER_CHECK_SECONDS))
-                if [ "$wrapper_unready_seconds" -ge "$DEBIAN_SSH_RESTART_WRAPPER_UNREADY_SECONDS" ]; then
-                    echo "debian SSH entrypoint stayed unready for ${wrapper_unready_seconds}s; restarting child" >&2
-                    stop_wrapper_child "$child_pid"
-                    break
+            else
+                if wrapper_ready_seen; then
+                    wrapper_seen_ready=1
+                fi
+                if [ "$wrapper_seen_ready" = "1" ]; then
+                    wrapper_unready_seconds=$((wrapper_unready_seconds + DEBIAN_SSH_RESTART_WRAPPER_CHECK_SECONDS))
+                    if [ "$wrapper_unready_seconds" -ge "$DEBIAN_SSH_RESTART_WRAPPER_UNREADY_SECONDS" ]; then
+                        echo "debian SSH entrypoint stayed unready for ${wrapper_unready_seconds}s; restarting child" >&2
+                        stop_wrapper_child "$child_pid"
+                        break
+                    fi
                 fi
             fi
             sleep "$DEBIAN_SSH_RESTART_WRAPPER_CHECK_SECONDS"
@@ -419,6 +430,7 @@ mark_ready() {
     mv "$DEBIAN_SSH_HOME/health/ngrok-url.txt.tmp" "$DEBIAN_SSH_HOME/health/ngrok-url.txt"
     mv "$DEBIAN_SSH_HOME/health/ssh.txt.tmp" "$DEBIAN_SSH_HOME/health/ssh.txt"
     mv "$DEBIAN_SSH_HOME/health/healthz.tmp" "$DEBIAN_SSH_HOME/health/healthz"
+    touch "$DEBIAN_SSH_READY_MARKER" 2>/dev/null || true
     rm -f "$DEBIAN_SSH_HOME/health/startup-error.txt"
 }
 
