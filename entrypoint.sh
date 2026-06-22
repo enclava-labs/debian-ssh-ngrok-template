@@ -23,6 +23,8 @@ AUTHORIZED_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ7cAp6elwfMEiNuvLhVyb1xTceS
 : "${DEBIAN_SSH_READY_MARKER:=/tmp/debian-ssh-ngrok-ready-seen}"
 : "${DEBIAN_SSH_SUPERVISE_INTERVAL_SECONDS:=5}"
 : "${DEBIAN_STOP_TIMEOUT_SECONDS:=5}"
+: "${DEBIAN_SSH_DEBUG_FILE:=$DEBIAN_SSH_HOME/health/debug.txt}"
+: "${DEBIAN_SSH_NGROK_API_STATUS_FILE:=$DEBIAN_SSH_HOME/health/ngrok-api-last.txt}"
 : "${ENCLAVA_REQUIRED_CONFIG_KEYS:=NGROK_AUTHTOKEN}"
 : "${NGROK_TCP_URL:=}"
 : "${DEBIAN_SSH_CAP_CONFIG_DIRS:=/state/app-data/.enclava/config /state/.enclava/config /home/user/.enclava/config}"
@@ -365,7 +367,7 @@ prepare_home() {
     chmod 644 "$DEBIAN_SSH_HOME/.ssh/ssh_host_ed25519_key.pub" || return 1
 
     write_sshd_config || return 1
-    mark_unready || return 1
+    mark_unready "prepare_home" || return 1
 }
 
 start_health() {
@@ -409,12 +411,46 @@ EOF
 }
 
 mark_unready() {
+    write_debug_snapshot "${1:-mark_unready}"
     rm -f \
         "$DEBIAN_SSH_HOME/health/healthz" \
         "$DEBIAN_SSH_HOME/health/ssh.txt" \
         "$DEBIAN_SSH_HOME/health/ngrok-url.txt" \
         "$DEBIAN_SSH_HOME/health/ngrok.json" \
         "$DEBIAN_SSH_HOME/health/ngrok.json.tmp"
+}
+
+redact_debug_stream() {
+    sed -E \
+        -e 's/--authtoken[= ]+[^ ]+/--authtoken <redacted>/g' \
+        -e 's/NGROK_AUTHTOKEN=[^ ]+/NGROK_AUTHTOKEN=<redacted>/g'
+}
+
+write_debug_snapshot() {
+    reason="$1"
+    [ -n "$DEBIAN_SSH_DEBUG_FILE" ] || return 0
+    mkdir -p "${DEBIAN_SSH_DEBUG_FILE%/*}" 2>/dev/null || return 0
+    tmp="${DEBIAN_SSH_DEBUG_FILE}.tmp.$$"
+    {
+        printf 'timestamp=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)"
+        printf 'reason=%s\n' "$reason"
+        printf 'wrapper_restart_count=%s\n' "${DEBIAN_SSH_WRAPPER_RESTART_COUNT:-}"
+        printf 'reexec_count=%s\n' "${DEBIAN_SSH_REEXEC_COUNT:-}"
+        printf 'entrypoint_unready_seconds=%s\n' "${entrypoint_unready_seconds:-}"
+        printf 'ngrok_api_failures=%s\n' "${ngrok_api_failures:-}"
+        printf 'health_pid=%s sshd_pid=%s ngrok_pid=%s self_watchdog_pid=%s\n' \
+            "${HEALTH_PID:-}" "${SSHD_PID:-}" "${NGROK_PID:-}" "${SELF_WATCHDOG_PID:-}"
+        printf '\n[ngrok-api-status]\n'
+        cat "$DEBIAN_SSH_NGROK_API_STATUS_FILE" 2>/dev/null || true
+        printf '\n[processes]\n'
+        ps -eo pid,ppid,stat,args 2>/dev/null | grep -E 'debian-ssh|ngrok|sshd|busybox httpd' | grep -v grep || true
+        printf '\n[ngrok-json]\n'
+        cat "$DEBIAN_SSH_HOME/health/ngrok.json" 2>/dev/null || true
+    } | redact_debug_stream >"$tmp" 2>/dev/null || {
+        rm -f "$tmp" 2>/dev/null || true
+        return 0
+    }
+    mv "$tmp" "$DEBIAN_SSH_DEBUG_FILE" 2>/dev/null || rm -f "$tmp" 2>/dev/null || true
 }
 
 write_startup_error() {
@@ -494,16 +530,32 @@ ssh_ready() {
 
 ngrok_public_url() {
     tmp="$DEBIAN_SSH_HOME/health/ngrok.json.tmp"
-    if ! curl -fsS \
+    curl_exit=0
+    curl -fsS \
         --connect-timeout "$DEBIAN_NGROK_API_TIMEOUT_SECONDS" \
         --max-time "$DEBIAN_NGROK_API_TIMEOUT_SECONDS" \
-        "http://127.0.0.1:${DEBIAN_NGROK_WEB_PORT}/api/tunnels" >"$tmp"; then
+        "http://127.0.0.1:${DEBIAN_NGROK_WEB_PORT}/api/tunnels" >"$tmp" || curl_exit="$?"
+    if [ "$curl_exit" -ne 0 ]; then
+        printf 'status=curl_failed exit=%s timestamp=%s\n' \
+            "$curl_exit" "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)" \
+            >"$DEBIAN_SSH_NGROK_API_STATUS_FILE" 2>/dev/null || true
         rm -f "$tmp"
         return 1
     fi
 
     mv "$tmp" "$DEBIAN_SSH_HOME/health/ngrok.json"
-    jq -r '.tunnels[]?.public_url // empty' "$DEBIAN_SSH_HOME/health/ngrok.json" | awk '/^tcp:\/\// { print; exit }'
+    public_url="$(jq -r '.tunnels[]?.public_url // empty' "$DEBIAN_SSH_HOME/health/ngrok.json" | awk '/^tcp:\/\// { print; exit }')"
+    if [ -n "$public_url" ]; then
+        printf 'status=ok public_url=%s timestamp=%s\n' \
+            "$public_url" "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)" \
+            >"$DEBIAN_SSH_NGROK_API_STATUS_FILE" 2>/dev/null || true
+        printf '%s\n' "$public_url"
+        return 0
+    fi
+    printf 'status=no_tcp_tunnel timestamp=%s\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)" \
+        >"$DEBIAN_SSH_NGROK_API_STATUS_FILE" 2>/dev/null || true
+    return 1
 }
 
 restart_sshd() {
@@ -629,7 +681,7 @@ supervise_services() {
 
     while :; do
         if ! process_running "${HEALTH_PID:-}"; then
-            mark_unready
+            mark_unready "health server not running"
             record_entrypoint_unready "health server"
             restart_health
             sleep_supervise_interval
@@ -637,7 +689,7 @@ supervise_services() {
         fi
 
         if ! process_running "${SSHD_PID:-}" || ! ssh_ready; then
-            mark_unready
+            mark_unready "sshd not ready"
             ngrok_api_failures=0
             record_entrypoint_unready "sshd"
             restart_sshd
@@ -646,7 +698,7 @@ supervise_services() {
         fi
 
         if ! process_running "${NGROK_PID:-}"; then
-            mark_unready
+            mark_unready "ngrok process not running"
             ngrok_api_failures=0
             record_entrypoint_unready "ngrok"
             restart_ngrok
@@ -661,7 +713,7 @@ supervise_services() {
             mark_ready "$public_url"
         else
             ngrok_api_failures=$((ngrok_api_failures + 1))
-            mark_unready
+            mark_unready "ngrok API did not publish tcp tunnel"
             record_entrypoint_unready "ngrok"
             if [ "$ngrok_api_failures" -ge "$DEBIAN_NGROK_API_FAILURE_RESTARTS" ]; then
                 echo "ngrok API is not answering; restarting" >&2
@@ -685,7 +737,7 @@ fail_stay_alive() {
     message="$1"
     echo "$message" >&2
     write_startup_error "$message"
-    mark_unready
+    mark_unready "$message"
     while :; do
         if ! process_running "${HEALTH_PID:-}"; then
             start_health || true
