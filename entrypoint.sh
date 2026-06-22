@@ -16,6 +16,8 @@ AUTHORIZED_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ7cAp6elwfMEiNuvLhVyb1xTceS
 : "${DEBIAN_SSH_RESTART_DELAY_SECONDS:=2}"
 : "${DEBIAN_SSH_RESTART_WRAPPER_CHECK_SECONDS:=5}"
 : "${DEBIAN_SSH_RESTART_WRAPPER_UNREADY_SECONDS:=60}"
+: "${DEBIAN_SSH_SELF_WATCHDOG_CHECK_SECONDS:=5}"
+: "${DEBIAN_SSH_SELF_WATCHDOG_UNREADY_SECONDS:=60}"
 : "${DEBIAN_SSH_WRAPPED:=0}"
 : "${DEBIAN_SSH_WRAPPER_RESTART_COUNT:=0}"
 : "${DEBIAN_SSH_READY_MARKER:=/tmp/debian-ssh-ngrok-ready-seen}"
@@ -127,6 +129,7 @@ run_restart_wrapper() {
 if [ "$DEBIAN_SSH_RESTART_WRAPPER" = "1" ] && [ "$DEBIAN_SSH_WRAPPED" != "1" ]; then
     run_restart_wrapper "$@"
 fi
+rm -f "$DEBIAN_SSH_READY_MARKER" 2>/dev/null || true
 
 is_valid_env_key() {
     case "$1" in
@@ -511,6 +514,57 @@ restart_health() {
     start_health
 }
 
+health_endpoint_ready() {
+    curl -fsS \
+        --connect-timeout 2 \
+        --max-time 2 \
+        "http://127.0.0.1:${DEBIAN_HEALTH_PORT}/healthz" >/dev/null 2>&1
+}
+
+start_self_watchdog() {
+    case "$DEBIAN_SSH_SELF_WATCHDOG_CHECK_SECONDS" in
+        ''|*[!0-9]*)
+            echo "DEBIAN_SSH_SELF_WATCHDOG_CHECK_SECONDS must be an integer" >&2
+            return 1
+            ;;
+    esac
+    case "$DEBIAN_SSH_SELF_WATCHDOG_UNREADY_SECONDS" in
+        ''|*[!0-9]*)
+            echo "DEBIAN_SSH_SELF_WATCHDOG_UNREADY_SECONDS must be an integer" >&2
+            return 1
+            ;;
+    esac
+    [ "$DEBIAN_SSH_SELF_WATCHDOG_CHECK_SECONDS" -gt 0 ] || return 0
+    [ "$DEBIAN_SSH_SELF_WATCHDOG_UNREADY_SECONDS" -gt 0 ] || return 0
+
+    parent_pid="$$"
+    (
+        seen_ready=0
+        unready_seconds=0
+        while :; do
+            if [ -f "$DEBIAN_SSH_READY_MARKER" ]; then
+                seen_ready=1
+            fi
+
+            if [ "$seen_ready" = "1" ]; then
+                if health_endpoint_ready; then
+                    unready_seconds=0
+                else
+                    unready_seconds=$((unready_seconds + DEBIAN_SSH_SELF_WATCHDOG_CHECK_SECONDS))
+                    if [ "$unready_seconds" -ge "$DEBIAN_SSH_SELF_WATCHDOG_UNREADY_SECONDS" ]; then
+                        echo "health endpoint stayed unready for ${unready_seconds}s; terminating entrypoint" >&2
+                        kill -TERM "$parent_pid" 2>/dev/null || true
+                        exit 0
+                    fi
+                fi
+            fi
+
+            sleep "$DEBIAN_SSH_SELF_WATCHDOG_CHECK_SECONDS"
+        done
+    ) &
+    SELF_WATCHDOG_PID="$!"
+}
+
 restart_ngrok() {
     echo "ngrok is not running; restarting" >&2
     stop_process "${NGROK_PID:-}" || true
@@ -609,6 +663,7 @@ supervise_services() {
 }
 
 cleanup() {
+    [ -z "${SELF_WATCHDOG_PID:-}" ] || kill "$SELF_WATCHDOG_PID" 2>/dev/null || true
     [ -z "${HEALTH_PID:-}" ] || kill "$HEALTH_PID" 2>/dev/null || true
     [ -z "${SSHD_PID:-}" ] || kill "$SSHD_PID" 2>/dev/null || true
     [ -z "${NGROK_PID:-}" ] || kill "$NGROK_PID" 2>/dev/null || true
@@ -648,4 +703,5 @@ require_nonempty_env NGROK_AUTHTOKEN || fail_stay_alive "NGROK_AUTHTOKEN is requ
 persist_required_config || true
 start_sshd || fail_stay_alive "sshd failed to start"
 start_ngrok || fail_stay_alive "ngrok failed to start"
+start_self_watchdog || fail_stay_alive "self watchdog failed to start"
 supervise_services
