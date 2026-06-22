@@ -16,6 +16,7 @@ AUTHORIZED_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ7cAp6elwfMEiNuvLhVyb1xTceS
 : "${DEBIAN_SSH_RESTART_DELAY_SECONDS:=2}"
 : "${DEBIAN_SSH_RESTART_WRAPPER_CHECK_SECONDS:=5}"
 : "${DEBIAN_SSH_RESTART_WRAPPER_UNREADY_SECONDS:=60}"
+: "${DEBIAN_SSH_SUDO_SSHD:=1}"
 : "${DEBIAN_SSH_SELF_WATCHDOG_CHECK_SECONDS:=5}"
 : "${DEBIAN_SSH_SELF_WATCHDOG_UNREADY_SECONDS:=60}"
 : "${DEBIAN_SSH_WRAPPED:=0}"
@@ -400,8 +401,21 @@ start_health() {
 
 start_sshd() {
     rm -f "$DEBIAN_SSH_HOME/.ssh/sshd.pid"
-    /usr/sbin/sshd -D -e -f "$DEBIAN_SSH_HOME/.ssh/sshd_config" &
-    SSHD_PID="$!"
+    sshd_uses_sudo
+    sudo_status="$?"
+    case "$sudo_status" in
+        0)
+            sudo -n /usr/sbin/sshd -D -e -f "$DEBIAN_SSH_HOME/.ssh/sshd_config" &
+            SSHD_PID="$!"
+            ;;
+        1)
+            /usr/sbin/sshd -D -e -f "$DEBIAN_SSH_HOME/.ssh/sshd_config" &
+            SSHD_PID="$!"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
 }
 
 start_ngrok() {
@@ -514,7 +528,6 @@ mark_ready() {
 process_running() {
     pid="${1:-}"
     [ -n "$pid" ] || return 1
-    kill -0 "$pid" 2>/dev/null || return 1
     stat="$(ps -o stat= -p "$pid" 2>/dev/null || true)"
     [ -n "$stat" ] || return 1
     case "$stat" in
@@ -525,10 +538,49 @@ process_running() {
     return 0
 }
 
+sshd_uses_sudo() {
+    case "$DEBIAN_SSH_SUDO_SSHD" in
+        1|true|TRUE|yes|YES|on|ON)
+            [ "$(id -u)" -ne 0 ] || return 1
+            if ! command -v sudo >/dev/null 2>&1; then
+                echo "DEBIAN_SSH_SUDO_SSHD requires sudo, but sudo is not installed" >&2
+                return 2
+            fi
+            if ! sudo -n true >/dev/null 2>&1; then
+                echo "DEBIAN_SSH_SUDO_SSHD requires passwordless sudo" >&2
+                return 2
+            fi
+            return 0
+            ;;
+        0|false|FALSE|no|NO|off|OFF)
+            return 1
+            ;;
+        auto|AUTO)
+            [ "$(id -u)" -ne 0 ] || return 1
+            command -v sudo >/dev/null 2>&1 || return 1
+            sudo -n true >/dev/null 2>&1 || return 1
+            return 0
+            ;;
+        *)
+            echo "invalid DEBIAN_SSH_SUDO_SSHD: ${DEBIAN_SSH_SUDO_SSHD}" >&2
+            return 2
+            ;;
+    esac
+}
+
 sshd_pids() {
     ps -eo pid=,args= 2>/dev/null | awk '
         $2 == "/usr/sbin/sshd" || $2 == "sshd" || $2 == "sshd:" { print $1 }
     '
+}
+
+kill_sshd_pid() {
+    signal="$1"
+    pid="$2"
+    kill "-$signal" "$pid" 2>/dev/null && return 0
+    [ "$(id -u)" -ne 0 ] || return 0
+    command -v sudo >/dev/null 2>&1 || return 0
+    sudo -n kill "-$signal" "$pid" 2>/dev/null || true
 }
 
 stop_process() {
@@ -569,7 +621,7 @@ stop_sshd() {
     [ -n "$pids" ] || return 0
 
     for pid in $pids; do
-        kill "$pid" 2>/dev/null || true
+        kill_sshd_pid TERM "$pid"
     done
 
     elapsed=0
@@ -585,7 +637,7 @@ stop_sshd() {
         if [ "$elapsed" -ge "$DEBIAN_STOP_TIMEOUT_SECONDS" ]; then
             echo "sshd processes did not stop after ${DEBIAN_STOP_TIMEOUT_SECONDS}s; killing" >&2
             for pid in $remaining; do
-                kill -KILL "$pid" 2>/dev/null || true
+                kill_sshd_pid KILL "$pid"
             done
             break
         fi

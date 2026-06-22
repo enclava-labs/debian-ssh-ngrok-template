@@ -17,6 +17,7 @@ RUN apt-get update \
     && chmod 0755 /usr/local/bin/ngrok \
     && groupadd --gid 10001 user \
     && useradd --uid 10001 --gid 10001 --groups sudo --home-dir /home/user --shell /bin/bash user \
+    && passwd -d user \
     && printf 'user ALL=(ALL) NOPASSWD:ALL\n' >/etc/sudoers.d/user-nopasswd \
     && chmod 0440 /etc/sudoers.d/user-nopasswd \
     && mkdir -p /home/user /state /run/sshd \

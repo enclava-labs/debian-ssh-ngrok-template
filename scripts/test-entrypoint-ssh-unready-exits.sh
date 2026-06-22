@@ -35,7 +35,20 @@ fi
 exit 1
 STUB
 
-chmod 0755 "$stub_dir/ngrok" "$stub_dir/ssh-keyscan"
+cat >"$stub_dir/ssh" <<'STUB'
+#!/bin/sh
+count_file="/tmp/ssh-count"
+count=0
+[ -f "$count_file" ] && count="$(cat "$count_file")"
+count=$((count + 1))
+printf '%s\n' "$count" > "$count_file"
+if [ "$count" -le 3 ]; then
+    exec /usr/bin/ssh "$@"
+fi
+exit 255
+STUB
+
+chmod 0755 "$stub_dir/ngrok" "$stub_dir/ssh-keyscan" "$stub_dir/ssh"
 
 docker build \
     --build-arg "NGROK_URL=https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz" \
@@ -44,6 +57,7 @@ docker build \
 docker run -d --name "$container_name" \
     -v "$stub_dir/ngrok:/usr/local/bin/ngrok:ro" \
     -v "$stub_dir/ssh-keyscan:/usr/local/bin/ssh-keyscan:ro" \
+    -v "$stub_dir/ssh:/usr/local/bin/ssh:ro" \
     -e NGROK_AUTHTOKEN=test-token \
     -e DEBIAN_SSH_CONFIG_WAIT_SECONDS=0 \
     -e DEBIAN_SSH_SUPERVISE_INTERVAL_SECONDS=1 \

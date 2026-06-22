@@ -54,6 +54,14 @@ if ! id -nG user | tr " " "\n" | grep -qx sudo; then
     exit 1
 fi
 
+shadow_password="$(getent shadow user | cut -d: -f2)"
+case "$shadow_password" in
+    [*!]*)
+        echo "expected user account to be valid for public-key SSH, found locked shadow entry" >&2
+        exit 1
+        ;;
+esac
+
 if [ "$(stat -c "%a" /etc/sudoers.d/user-nopasswd)" != "440" ]; then
     echo "expected /etc/sudoers.d/user-nopasswd mode 440" >&2
     exit 1

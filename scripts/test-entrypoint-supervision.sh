@@ -89,7 +89,7 @@ if ! docker exec "$container_name" ssh-keyscan -T 2 -t ed25519 -p 2222 127.0.0.1
     exit 1
 fi
 
-docker exec "$container_name" /bin/sh -eu -c 'kill "$(cat /home/user/.ssh/sshd.pid)"'
+docker exec "$container_name" /bin/sh -eu -c 'sudo -n kill "$(cat /home/user/.ssh/sshd.pid)"'
 
 for _ in $(seq 1 30); do
     if docker exec "$container_name" ssh-keyscan -T 2 -t ed25519 -p 2222 127.0.0.1 >/dev/null 2>&1; then
