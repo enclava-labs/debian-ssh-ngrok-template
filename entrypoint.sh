@@ -349,6 +349,8 @@ X11Forwarding no
 AllowTcpForwarding yes
 PermitTunnel no
 PrintMotd no
+LoginGraceTime 15
+MaxStartups 50:30:200
 Subsystem sftp internal-sftp
 EOF
 }
@@ -504,6 +506,12 @@ process_running() {
     return 0
 }
 
+sshd_pids() {
+    ps -eo pid=,args= 2>/dev/null | awk '
+        $2 == "/usr/sbin/sshd" || $2 == "sshd" || $2 == "sshd:" { print $1 }
+    '
+}
+
 stop_process() {
     pid="${1:-}"
     [ -n "$pid" ] || return 0
@@ -535,6 +543,40 @@ stop_process() {
     done
 
     wait "$pid" 2>/dev/null || true
+}
+
+stop_sshd() {
+    pids="$(sshd_pids || true)"
+    [ -n "$pids" ] || return 0
+
+    for pid in $pids; do
+        kill "$pid" 2>/dev/null || true
+    done
+
+    elapsed=0
+    while :; do
+        remaining=""
+        for pid in $pids; do
+            if process_running "$pid"; then
+                remaining="${remaining} ${pid}"
+            fi
+        done
+        [ -n "$remaining" ] || break
+
+        if [ "$elapsed" -ge "$DEBIAN_STOP_TIMEOUT_SECONDS" ]; then
+            echo "sshd processes did not stop after ${DEBIAN_STOP_TIMEOUT_SECONDS}s; killing" >&2
+            for pid in $remaining; do
+                kill -KILL "$pid" 2>/dev/null || true
+            done
+            break
+        fi
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+
+    for pid in $pids; do
+        wait "$pid" 2>/dev/null || true
+    done
 }
 
 ssh_ready() {
@@ -573,7 +615,7 @@ ngrok_public_url() {
 
 restart_sshd() {
     echo "sshd is not answering; restarting" >&2
-    stop_process "${SSHD_PID:-}" || true
+    stop_sshd || true
     start_sshd
 }
 
@@ -649,7 +691,7 @@ reexec_entrypoint() {
     echo "${reason} stayed unready for ${entrypoint_unready_seconds}s; re-execing entrypoint" >&2
     trap - INT TERM EXIT
     stop_process "${NGROK_PID:-}" || true
-    stop_process "${SSHD_PID:-}" || true
+    stop_sshd || true
     stop_process "${HEALTH_PID:-}" || true
     DEBIAN_SSH_REEXEC_COUNT=$((DEBIAN_SSH_REEXEC_COUNT + 1))
     export DEBIAN_SSH_REEXEC_COUNT
@@ -742,7 +784,7 @@ supervise_services() {
 cleanup() {
     [ -z "${SELF_WATCHDOG_PID:-}" ] || kill "$SELF_WATCHDOG_PID" 2>/dev/null || true
     [ -z "${HEALTH_PID:-}" ] || kill "$HEALTH_PID" 2>/dev/null || true
-    [ -z "${SSHD_PID:-}" ] || kill "$SSHD_PID" 2>/dev/null || true
+    stop_sshd || true
     [ -z "${NGROK_PID:-}" ] || kill "$NGROK_PID" 2>/dev/null || true
 }
 
