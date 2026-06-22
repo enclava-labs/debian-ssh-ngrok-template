@@ -628,6 +628,7 @@ trap cleanup EXIT
 
 prepare_home || fail_stay_alive "prepare_home failed"
 start_health || fail_stay_alive "health server failed to start"
+load_persisted_config || fail_stay_alive "persisted config load failed"
 wait_for_config || fail_stay_alive "CAP config wait failed"
 load_cap_config || fail_stay_alive "CAP config load failed"
 load_persisted_config || fail_stay_alive "persisted config load failed"
