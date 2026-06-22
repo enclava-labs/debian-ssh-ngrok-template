@@ -25,6 +25,8 @@ AUTHORIZED_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ7cAp6elwfMEiNuvLhVyb1xTceS
 : "${DEBIAN_STOP_TIMEOUT_SECONDS:=5}"
 : "${DEBIAN_SSH_DEBUG_FILE:=$DEBIAN_SSH_HOME/health/debug.txt}"
 : "${DEBIAN_SSH_NGROK_API_STATUS_FILE:=$DEBIAN_SSH_HOME/health/ngrok-api-last.txt}"
+: "${DEBIAN_SSH_NGROK_LOG_FILE:=/tmp/debian-ssh-ngrok-agent.log}"
+: "${DEBIAN_SSH_NGROK_LOG_LINES:=80}"
 : "${ENCLAVA_REQUIRED_CONFIG_KEYS:=NGROK_AUTHTOKEN}"
 : "${NGROK_TCP_URL:=}"
 : "${DEBIAN_SSH_CAP_CONFIG_DIRS:=/state/app-data/.enclava/config /state/.enclava/config /home/user/.enclava/config}"
@@ -388,24 +390,26 @@ start_ngrok() {
     rm -rf "$DEBIAN_SSH_HOME/.cache/ngrok"
     mkdir -p "$DEBIAN_SSH_HOME/.cache/ngrok" || return 1
     chmod 700 "$DEBIAN_SSH_HOME/.cache/ngrok" || return 1
+    mkdir -p "${DEBIAN_SSH_NGROK_LOG_FILE%/*}" || return 1
+    : >"$DEBIAN_SSH_NGROK_LOG_FILE" || return 1
+    chmod 600 "$DEBIAN_SSH_NGROK_LOG_FILE" || return 1
     cat >"$DEBIAN_SSH_HOME/.config/ngrok/ngrok.yml" <<EOF
 version: 3
 agent:
   web_addr: 127.0.0.1:${DEBIAN_NGROK_WEB_PORT}
+  log: ${DEBIAN_SSH_NGROK_LOG_FILE}
+  log_format: json
+  log_level: debug
 EOF
     if [ -n "$NGROK_TCP_URL" ]; then
         ngrok tcp "127.0.0.1:${DEBIAN_SSH_PORT}" \
             --url "$NGROK_TCP_URL" \
             --authtoken "$NGROK_AUTHTOKEN" \
-            --config "$DEBIAN_SSH_HOME/.config/ngrok/ngrok.yml" \
-            --log stdout \
-            --log-format json &
+            --config "$DEBIAN_SSH_HOME/.config/ngrok/ngrok.yml" &
     else
         ngrok tcp "127.0.0.1:${DEBIAN_SSH_PORT}" \
             --authtoken "$NGROK_AUTHTOKEN" \
-            --config "$DEBIAN_SSH_HOME/.config/ngrok/ngrok.yml" \
-            --log stdout \
-            --log-format json &
+            --config "$DEBIAN_SSH_HOME/.config/ngrok/ngrok.yml" &
     fi
     NGROK_PID="$!"
 }
@@ -444,8 +448,17 @@ write_debug_snapshot() {
         cat "$DEBIAN_SSH_NGROK_API_STATUS_FILE" 2>/dev/null || true
         printf '\n[processes]\n'
         ps -eo pid,ppid,stat,args 2>/dev/null | grep -E 'debian-ssh|ngrok|sshd|busybox httpd' | grep -v grep || true
+        if [ -n "${NGROK_PID:-}" ]; then
+            printf '\n[ngrok-proc-status]\n'
+            cat "/proc/$NGROK_PID/status" 2>/dev/null || true
+            printf 'wchan='
+            cat "/proc/$NGROK_PID/wchan" 2>/dev/null || true
+            printf '\n'
+        fi
         printf '\n[ngrok-json]\n'
         cat "$DEBIAN_SSH_HOME/health/ngrok.json" 2>/dev/null || true
+        printf '\n[ngrok-log]\n'
+        tail -n "$DEBIAN_SSH_NGROK_LOG_LINES" "$DEBIAN_SSH_NGROK_LOG_FILE" 2>/dev/null || true
     } | redact_debug_stream >"$tmp" 2>/dev/null || {
         rm -f "$tmp" 2>/dev/null || true
         return 0

@@ -19,6 +19,7 @@ set -eu
 
 root="$(mktemp -d)"
 mkdir -p "$root/api"
+printf 'ngrok stub args: %s\n' "$*" >/tmp/debian-ssh-ngrok-agent.log
 
 if [ ! -f /tmp/ngrok-debug-snapshot-started ]; then
     touch /tmp/ngrok-debug-snapshot-started
@@ -90,5 +91,11 @@ fi
 if ! docker exec "$container_name" grep -q -- '--authtoken <redacted>' /home/user/health/debug.txt; then
     docker exec "$container_name" cat /home/user/health/debug.txt >&2 || true
     echo "expected debug snapshot to show redacted ngrok authtoken" >&2
+    exit 1
+fi
+
+if ! docker exec "$container_name" grep -q '^\[ngrok-log\]$' /home/user/health/debug.txt; then
+    docker exec "$container_name" cat /home/user/health/debug.txt >&2 || true
+    echo "expected debug snapshot to include ngrok log tail" >&2
     exit 1
 fi
