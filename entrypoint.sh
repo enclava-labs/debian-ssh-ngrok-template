@@ -580,7 +580,8 @@ restart_ngrok() {
 }
 
 reexec_entrypoint() {
-    echo "ngrok stayed unready for ${ngrok_unready_seconds}s; re-execing entrypoint" >&2
+    reason="${1:-entrypoint}"
+    echo "${reason} stayed unready for ${entrypoint_unready_seconds}s; re-execing entrypoint" >&2
     trap - INT TERM EXIT
     stop_process "${NGROK_PID:-}" || true
     stop_process "${SSHD_PID:-}" || true
@@ -592,17 +593,18 @@ reexec_entrypoint() {
     exit 1
 }
 
-record_ngrok_unready() {
-    ngrok_unready_seconds=$((ngrok_unready_seconds + DEBIAN_SSH_SUPERVISE_INTERVAL_SECONDS))
+record_entrypoint_unready() {
+    reason="$1"
+    entrypoint_unready_seconds=$((entrypoint_unready_seconds + DEBIAN_SSH_SUPERVISE_INTERVAL_SECONDS))
     if [ "$DEBIAN_NGROK_UNREADY_EXIT_SECONDS" -gt 0 ] \
-        && [ "$ngrok_unready_seconds" -ge "$DEBIAN_NGROK_UNREADY_EXIT_SECONDS" ]; then
+        && [ "$entrypoint_unready_seconds" -ge "$DEBIAN_NGROK_UNREADY_EXIT_SECONDS" ]; then
         case "$DEBIAN_NGROK_UNREADY_ACTION" in
             exit)
-                echo "ngrok stayed unready for ${ngrok_unready_seconds}s; exiting for container restart" >&2
+                echo "${reason} stayed unready for ${entrypoint_unready_seconds}s; exiting for container restart" >&2
                 exit 1
                 ;;
             reexec)
-                reexec_entrypoint
+                reexec_entrypoint "$reason"
                 ;;
             *)
                 echo "invalid DEBIAN_NGROK_UNREADY_ACTION: ${DEBIAN_NGROK_UNREADY_ACTION}" >&2
@@ -622,12 +624,13 @@ sleep_supervise_interval() {
 
 supervise_services() {
     ngrok_api_failures=0
-    ngrok_unready_seconds=0
+    entrypoint_unready_seconds=0
     DEBIAN_SSH_REEXEC_COUNT="${DEBIAN_SSH_REEXEC_COUNT:-0}"
 
     while :; do
         if ! process_running "${HEALTH_PID:-}"; then
             mark_unready
+            record_entrypoint_unready "health server"
             restart_health
             sleep_supervise_interval
             continue
@@ -636,6 +639,7 @@ supervise_services() {
         if ! process_running "${SSHD_PID:-}" || ! ssh_ready; then
             mark_unready
             ngrok_api_failures=0
+            record_entrypoint_unready "sshd"
             restart_sshd
             sleep_supervise_interval
             continue
@@ -644,7 +648,7 @@ supervise_services() {
         if ! process_running "${NGROK_PID:-}"; then
             mark_unready
             ngrok_api_failures=0
-            record_ngrok_unready
+            record_entrypoint_unready "ngrok"
             restart_ngrok
             sleep_supervise_interval
             continue
@@ -653,12 +657,12 @@ supervise_services() {
         public_url="$(ngrok_public_url || true)"
         if [ -n "$public_url" ]; then
             ngrok_api_failures=0
-            ngrok_unready_seconds=0
+            entrypoint_unready_seconds=0
             mark_ready "$public_url"
         else
             ngrok_api_failures=$((ngrok_api_failures + 1))
             mark_unready
-            record_ngrok_unready
+            record_entrypoint_unready "ngrok"
             if [ "$ngrok_api_failures" -ge "$DEBIAN_NGROK_API_FAILURE_RESTARTS" ]; then
                 echo "ngrok API is not answering; restarting" >&2
                 restart_ngrok
