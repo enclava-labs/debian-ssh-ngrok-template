@@ -19,6 +19,8 @@ AUTHORIZED_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ7cAp6elwfMEiNuvLhVyb1xTceS
 : "${DEBIAN_SSH_SUDO_SSHD:=0}"
 : "${DEBIAN_SSH_SELF_WATCHDOG_CHECK_SECONDS:=5}"
 : "${DEBIAN_SSH_SELF_WATCHDOG_UNREADY_SECONDS:=60}"
+: "${DEBIAN_SSH_LOGIN_CHECK_INTERVAL_SECONDS:=60}"
+: "${DEBIAN_SSH_LOGIN_CHECK_TIMEOUT_SECONDS:=15}"
 : "${DEBIAN_SSH_WRAPPED:=0}"
 : "${DEBIAN_SSH_WRAPPER_RESTART_COUNT:=0}"
 : "${DEBIAN_SSH_READY_MARKER:=/tmp/debian-ssh-ngrok-ready-seen}"
@@ -656,6 +658,23 @@ ssh_ready() {
         | awk '$2 == "ssh-ed25519" { found=1 } END { exit found ? 0 : 1 }'
 }
 
+ssh_session_ready() {
+    [ -r "$DEBIAN_SSH_READY_KEY" ] || return 1
+    timeout "$DEBIAN_SSH_LOGIN_CHECK_TIMEOUT_SECONDS" ssh -F /dev/null \
+        -i "$DEBIAN_SSH_READY_KEY" \
+        -o BatchMode=yes \
+        -o ConnectTimeout=5 \
+        -o ConnectionAttempts=1 \
+        -o GlobalKnownHostsFile=/dev/null \
+        -o IdentitiesOnly=yes \
+        -o LogLevel=ERROR \
+        -o StrictHostKeyChecking=no \
+        -o UserKnownHostsFile=/dev/null \
+        -p "$DEBIAN_SSH_PORT" \
+        "${DEBIAN_SSH_USER}@127.0.0.1" \
+        true </dev/null >/dev/null 2>&1
+}
+
 ngrok_public_url() {
     tmp="$DEBIAN_SSH_HOME/health/ngrok.json.tmp"
     curl_exit=0
@@ -753,6 +772,26 @@ start_self_watchdog() {
     SELF_WATCHDOG_PID="$!"
 }
 
+validate_ssh_login_watchdog_config() {
+    case "$DEBIAN_SSH_LOGIN_CHECK_INTERVAL_SECONDS" in
+        ''|*[!0-9]*)
+            echo "DEBIAN_SSH_LOGIN_CHECK_INTERVAL_SECONDS must be an integer" >&2
+            return 1
+            ;;
+    esac
+    case "$DEBIAN_SSH_LOGIN_CHECK_TIMEOUT_SECONDS" in
+        ''|*[!0-9]*)
+            echo "DEBIAN_SSH_LOGIN_CHECK_TIMEOUT_SECONDS must be an integer" >&2
+            return 1
+            ;;
+    esac
+    if [ "$DEBIAN_SSH_LOGIN_CHECK_INTERVAL_SECONDS" -gt 0 ] \
+        && [ "$DEBIAN_SSH_LOGIN_CHECK_TIMEOUT_SECONDS" -le 0 ]; then
+        echo "DEBIAN_SSH_LOGIN_CHECK_TIMEOUT_SECONDS must be greater than zero when login checks are enabled" >&2
+        return 1
+    fi
+}
+
 restart_ngrok() {
     echo "ngrok is not running; restarting" >&2
     stop_process "${NGROK_PID:-}" || true
@@ -806,6 +845,7 @@ supervise_services() {
     ngrok_api_failures=0
     entrypoint_unready_seconds=0
     DEBIAN_SSH_REEXEC_COUNT="${DEBIAN_SSH_REEXEC_COUNT:-0}"
+    last_ssh_login_check_epoch="$(date +%s)"
 
     while :; do
         if ! process_running "${HEALTH_PID:-}"; then
@@ -836,6 +876,22 @@ supervise_services() {
 
         public_url="$(ngrok_public_url || true)"
         if [ -n "$public_url" ]; then
+            now="$(date +%s)"
+            if [ ! -f "$DEBIAN_SSH_READY_MARKER" ] && [ ! -f "$DEBIAN_SSH_HOME/health/.ready-seen" ]; then
+                last_ssh_login_check_epoch="$now"
+            elif [ "$DEBIAN_SSH_LOGIN_CHECK_INTERVAL_SECONDS" -gt 0 ] \
+                && [ $((now - last_ssh_login_check_epoch)) -ge "$DEBIAN_SSH_LOGIN_CHECK_INTERVAL_SECONDS" ]; then
+                if ssh_session_ready; then
+                    last_ssh_login_check_epoch="$now"
+                else
+                    mark_unready "ssh session not ready"
+                    ngrok_api_failures=0
+                    record_entrypoint_unready "ssh session"
+                    restart_sshd
+                    sleep_supervise_interval
+                    continue
+                fi
+            fi
             ngrok_api_failures=0
             entrypoint_unready_seconds=0
             mark_ready "$public_url"
@@ -893,6 +949,7 @@ load_cap_config || fail_stay_alive "CAP config load failed"
 load_persisted_config || fail_stay_alive "persisted config load failed"
 require_nonempty_env NGROK_AUTHTOKEN || fail_stay_alive "NGROK_AUTHTOKEN is required"
 persist_required_config || true
+validate_ssh_login_watchdog_config || fail_stay_alive "ssh login watchdog config invalid"
 start_sshd || fail_stay_alive "sshd failed to start"
 start_ngrok || fail_stay_alive "ngrok failed to start"
 start_self_watchdog || fail_stay_alive "self watchdog failed to start"
