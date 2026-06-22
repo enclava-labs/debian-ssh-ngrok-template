@@ -648,7 +648,29 @@ stop_sshd() {
         elapsed=$((elapsed + 1))
     done
 
+    elapsed=0
+    while :; do
+        remaining=""
+        for pid in $pids; do
+            if process_running "$pid"; then
+                remaining="${remaining} ${pid}"
+            fi
+        done
+        [ -n "$remaining" ] || break
+
+        if [ "$elapsed" -ge 2 ]; then
+            echo "sshd processes still running after SIGKILL:${remaining}; skipping wait" >&2
+            write_debug_snapshot "sshd still running after SIGKILL"
+            break
+        fi
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+
     for pid in $pids; do
+        if process_running "$pid"; then
+            continue
+        fi
         wait "$pid" 2>/dev/null || true
     done
 }
