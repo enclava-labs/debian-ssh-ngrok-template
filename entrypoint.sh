@@ -60,7 +60,7 @@ run_restart_wrapper() {
     }
 
     wrapper_ready_seen() {
-        [ -f "$DEBIAN_SSH_READY_MARKER" ]
+        [ -f "$DEBIAN_SSH_READY_MARKER" ] || [ -f "$DEBIAN_SSH_HOME/health/.ready-seen" ]
     }
 
     stop_wrapper_child() {
@@ -130,6 +130,7 @@ if [ "$DEBIAN_SSH_RESTART_WRAPPER" = "1" ] && [ "$DEBIAN_SSH_WRAPPED" != "1" ]; 
     run_restart_wrapper "$@"
 fi
 rm -f "$DEBIAN_SSH_READY_MARKER" 2>/dev/null || true
+rm -f "$DEBIAN_SSH_HOME/health/.ready-seen" 2>/dev/null || true
 
 is_valid_env_key() {
     case "$1" in
@@ -433,6 +434,7 @@ mark_ready() {
     mv "$DEBIAN_SSH_HOME/health/ngrok-url.txt.tmp" "$DEBIAN_SSH_HOME/health/ngrok-url.txt"
     mv "$DEBIAN_SSH_HOME/health/ssh.txt.tmp" "$DEBIAN_SSH_HOME/health/ssh.txt"
     mv "$DEBIAN_SSH_HOME/health/healthz.tmp" "$DEBIAN_SSH_HOME/health/healthz"
+    touch "$DEBIAN_SSH_HOME/health/.ready-seen" 2>/dev/null || true
     touch "$DEBIAN_SSH_READY_MARKER" 2>/dev/null || true
     rm -f "$DEBIAN_SSH_HOME/health/startup-error.txt"
 }
@@ -542,7 +544,9 @@ start_self_watchdog() {
         seen_ready=0
         unready_seconds=0
         while :; do
-            if [ -f "$DEBIAN_SSH_READY_MARKER" ]; then
+            if [ -f "$DEBIAN_SSH_READY_MARKER" ] \
+                || [ -f "$DEBIAN_SSH_HOME/health/.ready-seen" ] \
+                || [ -f "$DEBIAN_SSH_HOME/health/healthz" ]; then
                 seen_ready=1
             fi
 

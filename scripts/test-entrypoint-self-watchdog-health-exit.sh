@@ -37,6 +37,7 @@ docker run -d --name "$container_name" \
     -e NGROK_AUTHTOKEN=test-token \
     -e DEBIAN_SSH_CONFIG_WAIT_SECONDS=0 \
     -e DEBIAN_SSH_SUPERVISE_INTERVAL_SECONDS=999 \
+    -e DEBIAN_SSH_READY_MARKER=/proc/debian-ssh-ngrok-ready-seen \
     -e DEBIAN_SSH_SELF_WATCHDOG_CHECK_SECONDS=1 \
     -e DEBIAN_SSH_SELF_WATCHDOG_UNREADY_SECONDS=4 \
     -v "$stub_dir:/test-bin:ro" \
