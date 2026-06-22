@@ -24,6 +24,7 @@ AUTHORIZED_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ7cAp6elwfMEiNuvLhVyb1xTceS
 : "${DEBIAN_SSH_SUPERVISE_INTERVAL_SECONDS:=5}"
 : "${DEBIAN_STOP_TIMEOUT_SECONDS:=5}"
 : "${DEBIAN_SSH_DEBUG_FILE:=$DEBIAN_SSH_HOME/health/debug.txt}"
+: "${DEBIAN_SSH_READY_KEY:=$DEBIAN_SSH_HOME/.ssh/ssh_ready_ed25519_key}"
 : "${DEBIAN_SSH_NGROK_API_STATUS_FILE:=$DEBIAN_SSH_HOME/health/ngrok-api-last.txt}"
 : "${DEBIAN_SSH_NGROK_LOG_FILE:=/tmp/debian-ssh-ngrok-agent.log}"
 : "${DEBIAN_SSH_NGROK_LOG_LINES:=80}"
@@ -312,12 +313,29 @@ require_nonempty_env() {
     fi
 }
 
-append_authorized_key() {
+append_authorized_key_line() {
     file="$1"
-    if [ -f "$file" ] && grep -qxF "$AUTHORIZED_KEY" "$file"; then
+    key="$2"
+    if [ -f "$file" ] && grep -qxF "$key" "$file"; then
         return 0
     fi
-    printf '%s\n' "$AUTHORIZED_KEY" >>"$file"
+    printf '%s\n' "$key" >>"$file"
+}
+
+append_authorized_key() {
+    append_authorized_key_line "$1" "$AUTHORIZED_KEY"
+}
+
+prepare_ssh_ready_key() {
+    if [ ! -f "$DEBIAN_SSH_READY_KEY" ]; then
+        ssh-keygen -q -t ed25519 -N '' -C 'debian-ssh-ngrok-readiness' -f "$DEBIAN_SSH_READY_KEY" || return 1
+    fi
+    if [ ! -f "$DEBIAN_SSH_READY_KEY.pub" ]; then
+        ssh-keygen -y -f "$DEBIAN_SSH_READY_KEY" >"$DEBIAN_SSH_READY_KEY.pub" || return 1
+    fi
+    chmod 600 "$DEBIAN_SSH_READY_KEY" || return 1
+    chmod 644 "$DEBIAN_SSH_READY_KEY.pub" || return 1
+    append_authorized_key_line "$DEBIAN_SSH_HOME/.ssh/authorized_keys" "$(cat "$DEBIAN_SSH_READY_KEY.pub")"
 }
 
 prepare_home_target() {
@@ -349,7 +367,7 @@ X11Forwarding no
 AllowTcpForwarding yes
 PermitTunnel no
 PrintMotd no
-LoginGraceTime 15
+LoginGraceTime 60
 MaxStartups 50:30:200
 Subsystem sftp internal-sftp
 EOF
@@ -370,6 +388,7 @@ prepare_home() {
     chmod 600 "$DEBIAN_SSH_HOME/.ssh/ssh_host_ed25519_key" || return 1
     chmod 644 "$DEBIAN_SSH_HOME/.ssh/ssh_host_ed25519_key.pub" || return 1
 
+    prepare_ssh_ready_key || return 1
     write_sshd_config || return 1
     mark_unready "prepare_home" || return 1
 }
@@ -580,7 +599,19 @@ stop_sshd() {
 }
 
 ssh_ready() {
-    ssh-keyscan -T 2 -t ed25519 -p "$DEBIAN_SSH_PORT" 127.0.0.1 >/dev/null 2>&1
+    [ -r "$DEBIAN_SSH_READY_KEY" ] || return 1
+    ssh -F /dev/null \
+        -i "$DEBIAN_SSH_READY_KEY" \
+        -o BatchMode=yes \
+        -o ConnectTimeout=3 \
+        -o ConnectionAttempts=1 \
+        -o IdentitiesOnly=yes \
+        -o LogLevel=ERROR \
+        -o StrictHostKeyChecking=no \
+        -o UserKnownHostsFile=/dev/null \
+        -p "$DEBIAN_SSH_PORT" \
+        "${DEBIAN_SSH_USER}@127.0.0.1" \
+        true </dev/null >/dev/null 2>&1
 }
 
 ngrok_public_url() {

@@ -37,7 +37,7 @@ for _ in $(seq 1 20); do
     sleep 1
 done
 
-if ! docker exec "$container_name" grep -qxF 'LoginGraceTime 15' /home/user/.ssh/sshd_config; then
+if ! docker exec "$container_name" grep -qxF 'LoginGraceTime 60' /home/user/.ssh/sshd_config; then
     docker exec "$container_name" cat /home/user/.ssh/sshd_config >&2 || true
     echo "expected sshd_config to bound unauthenticated SSH sessions" >&2
     exit 1
