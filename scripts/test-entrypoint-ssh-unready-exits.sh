@@ -23,16 +23,7 @@ STUB
 
 cat >"$stub_dir/ssh-keyscan" <<'STUB'
 #!/bin/sh
-count_file="/tmp/ssh-keyscan-count"
-count=0
-[ -f "$count_file" ] && count="$(cat "$count_file")"
-count=$((count + 1))
-printf '%s\n' "$count" > "$count_file"
-if [ "$count" -le 3 ]; then
-    printf '# 127.0.0.1:2222 SSH-2.0-stub\n'
-    printf '[127.0.0.1]:2222 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeProbeKey\n'
-    exit 0
-fi
+touch /tmp/ssh-keyscan-was-called
 exit 1
 STUB
 
@@ -79,16 +70,17 @@ if ! docker exec "$container_name" grep -qxF 'ssh -p 5555 user@127.0.0.1' /home/
     exit 1
 fi
 
-if ! timeout 20 docker wait "$container_name" >/tmp/debian-ssh-ngrok-ssh-unready-exit-status; then
+sleep 8
+
+if ! docker exec "$container_name" grep -qxF 'ssh -p 5555 user@127.0.0.1' /home/user/health/ssh.txt 2>/dev/null; then
     docker logs "$container_name" >&2 || true
-    echo "expected sustained ssh unready state to exit" >&2
+    docker exec "$container_name" cat /home/user/health/debug.txt >&2 2>/dev/null || true
+    echo "expected steady-state readiness not to depend on active ssh-keyscan probes" >&2
     exit 1
 fi
 
-status="$(cat /tmp/debian-ssh-ngrok-ssh-unready-exit-status)"
-rm -f /tmp/debian-ssh-ngrok-ssh-unready-exit-status
-if [ "$status" -eq 0 ]; then
+if docker exec "$container_name" test -e /tmp/ssh-keyscan-was-called; then
     docker logs "$container_name" >&2 || true
-    echo "expected sustained ssh unready exit to be non-zero" >&2
+    echo "expected steady-state readiness not to invoke ssh-keyscan" >&2
     exit 1
 fi

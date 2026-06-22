@@ -18,7 +18,7 @@ AUTHORIZED_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ7cAp6elwfMEiNuvLhVyb1xTceS
 : "${DEBIAN_SSH_RESTART_WRAPPER_UNREADY_SECONDS:=60}"
 : "${DEBIAN_SSH_SELF_WATCHDOG_CHECK_SECONDS:=5}"
 : "${DEBIAN_SSH_SELF_WATCHDOG_UNREADY_SECONDS:=60}"
-: "${DEBIAN_SSH_LOGIN_CHECK_INTERVAL_SECONDS:=60}"
+: "${DEBIAN_SSH_LOGIN_CHECK_INTERVAL_SECONDS:=0}"
 : "${DEBIAN_SSH_LOGIN_CHECK_TIMEOUT_SECONDS:=15}"
 : "${DEBIAN_SSH_WRAPPED:=0}"
 : "${DEBIAN_SSH_WRAPPER_RESTART_COUNT:=0}"
@@ -627,8 +627,11 @@ stop_sshd() {
 }
 
 ssh_ready() {
-    ssh-keyscan -T 3 -t ed25519 -p "$DEBIAN_SSH_PORT" 127.0.0.1 2>/dev/null \
-        | awk '$2 == "ssh-ed25519" { found=1 } END { exit found ? 0 : 1 }'
+    port_hex="$(printf '%04X' "$DEBIAN_SSH_PORT" 2>/dev/null)" || return 1
+    awk -v port=":${port_hex}" '
+        $2 ~ port "$" && $4 == "0A" { found=1 }
+        END { exit found ? 0 : 1 }
+    ' /proc/net/tcp /proc/net/tcp6 2>/dev/null
 }
 
 ssh_session_ready() {
