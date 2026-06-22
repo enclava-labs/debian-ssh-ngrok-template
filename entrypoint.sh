@@ -53,6 +53,8 @@ run_restart_wrapper() {
     }
 
     wrapper_health_ready() {
+        [ -f "$DEBIAN_SSH_HOME/health/healthz" ] || return 1
+        [ -f "$DEBIAN_SSH_HOME/health/ssh.txt" ] || return 1
         curl -fsS \
             --connect-timeout 2 \
             --max-time 2 \
@@ -517,6 +519,8 @@ restart_health() {
 }
 
 health_endpoint_ready() {
+    [ -f "$DEBIAN_SSH_HOME/health/healthz" ] || return 1
+    [ -f "$DEBIAN_SSH_HOME/health/ssh.txt" ] || return 1
     curl -fsS \
         --connect-timeout 2 \
         --max-time 2 \
