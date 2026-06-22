@@ -16,7 +16,6 @@ AUTHORIZED_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ7cAp6elwfMEiNuvLhVyb1xTceS
 : "${DEBIAN_SSH_RESTART_DELAY_SECONDS:=2}"
 : "${DEBIAN_SSH_RESTART_WRAPPER_CHECK_SECONDS:=5}"
 : "${DEBIAN_SSH_RESTART_WRAPPER_UNREADY_SECONDS:=60}"
-: "${DEBIAN_SSH_SUDO_SSHD:=0}"
 : "${DEBIAN_SSH_SELF_WATCHDOG_CHECK_SECONDS:=5}"
 : "${DEBIAN_SSH_SELF_WATCHDOG_UNREADY_SECONDS:=60}"
 : "${DEBIAN_SSH_LOGIN_CHECK_INTERVAL_SECONDS:=60}"
@@ -28,6 +27,8 @@ AUTHORIZED_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ7cAp6elwfMEiNuvLhVyb1xTceS
 : "${DEBIAN_STOP_TIMEOUT_SECONDS:=5}"
 : "${DEBIAN_SSH_DEBUG_FILE:=$DEBIAN_SSH_HOME/health/debug.txt}"
 : "${DEBIAN_SSH_READY_KEY:=$DEBIAN_SSH_HOME/.ssh/ssh_ready_ed25519_key}"
+: "${DEBIAN_SSH_HOST_KEY:=$DEBIAN_SSH_HOME/.ssh/dropbear_ed25519_host_key}"
+: "${DEBIAN_SSH_PID_FILE:=$DEBIAN_SSH_HOME/.ssh/ssh_daemon.pid}"
 : "${DEBIAN_SSH_NGROK_API_STATUS_FILE:=$DEBIAN_SSH_HOME/health/ngrok-api-last.txt}"
 : "${DEBIAN_SSH_NGROK_LOG_FILE:=/tmp/debian-ssh-ngrok-agent.log}"
 : "${DEBIAN_SSH_NGROK_LOG_LINES:=80}"
@@ -367,30 +368,6 @@ prepare_home_target() {
     fi
 }
 
-write_sshd_config() {
-    cat >"$DEBIAN_SSH_HOME/.ssh/sshd_config" <<EOF
-Port ${DEBIAN_SSH_PORT}
-ListenAddress 0.0.0.0
-HostKey ${DEBIAN_SSH_HOME}/.ssh/ssh_host_ed25519_key
-AuthorizedKeysFile ${DEBIAN_SSH_HOME}/.ssh/authorized_keys
-PidFile ${DEBIAN_SSH_HOME}/.ssh/sshd.pid
-PasswordAuthentication no
-KbdInteractiveAuthentication no
-ChallengeResponseAuthentication no
-UsePAM no
-PermitRootLogin no
-AllowUsers ${DEBIAN_SSH_USER}
-StrictModes no
-X11Forwarding no
-AllowTcpForwarding yes
-PermitTunnel no
-PrintMotd no
-LoginGraceTime 60
-MaxStartups 50:30:200
-Subsystem sftp internal-sftp
-EOF
-}
-
 prepare_home() {
     prepare_home_target || return 1
     mkdir -p "$DEBIAN_SSH_HOME/.ssh" "$DEBIAN_SSH_HOME/.config/ngrok" "$DEBIAN_SSH_HOME/.cache/ngrok" "$DEBIAN_SSH_HOME/health" || return 1
@@ -400,14 +377,12 @@ prepare_home() {
     append_authorized_key "$DEBIAN_SSH_HOME/.ssh/authorized_keys" || return 1
     chmod 600 "$DEBIAN_SSH_HOME/.ssh/authorized_keys" || return 1
 
-    if [ ! -f "$DEBIAN_SSH_HOME/.ssh/ssh_host_ed25519_key" ]; then
-        ssh-keygen -q -t ed25519 -N '' -f "$DEBIAN_SSH_HOME/.ssh/ssh_host_ed25519_key" || return 1
+    if [ ! -f "$DEBIAN_SSH_HOST_KEY" ]; then
+        dropbearkey -t ed25519 -f "$DEBIAN_SSH_HOST_KEY" >/dev/null 2>&1 || return 1
     fi
-    chmod 600 "$DEBIAN_SSH_HOME/.ssh/ssh_host_ed25519_key" || return 1
-    chmod 644 "$DEBIAN_SSH_HOME/.ssh/ssh_host_ed25519_key.pub" || return 1
+    chmod 600 "$DEBIAN_SSH_HOST_KEY" || return 1
 
     prepare_ssh_ready_key || return 1
-    write_sshd_config || return 1
     mark_unready "prepare_home" || return 1
 }
 
@@ -417,22 +392,16 @@ start_health() {
 }
 
 start_sshd() {
-    rm -f "$DEBIAN_SSH_HOME/.ssh/sshd.pid"
-    sshd_uses_sudo
-    sudo_status="$?"
-    case "$sudo_status" in
-        0)
-            sudo -n /usr/sbin/sshd -D -e -f "$DEBIAN_SSH_HOME/.ssh/sshd_config" &
-            SSHD_PID="$!"
-            ;;
-        1)
-            /usr/sbin/sshd -D -e -f "$DEBIAN_SSH_HOME/.ssh/sshd_config" &
-            SSHD_PID="$!"
-            ;;
-        *)
-            return 1
-            ;;
-    esac
+    rm -f "$DEBIAN_SSH_PID_FILE"
+    /usr/sbin/dropbear \
+        -F \
+        -E \
+        -s \
+        -w \
+        -p "0.0.0.0:${DEBIAN_SSH_PORT}" \
+        -P "$DEBIAN_SSH_PID_FILE" \
+        -r "$DEBIAN_SSH_HOST_KEY" &
+    SSHD_PID="$!"
 }
 
 start_ngrok() {
@@ -495,12 +464,12 @@ write_debug_snapshot() {
         printf 'reexec_count=%s\n' "${DEBIAN_SSH_REEXEC_COUNT:-}"
         printf 'entrypoint_unready_seconds=%s\n' "${entrypoint_unready_seconds:-}"
         printf 'ngrok_api_failures=%s\n' "${ngrok_api_failures:-}"
-        printf 'health_pid=%s sshd_pid=%s ngrok_pid=%s self_watchdog_pid=%s\n' \
+        printf 'health_pid=%s ssh_pid=%s ngrok_pid=%s self_watchdog_pid=%s\n' \
             "${HEALTH_PID:-}" "${SSHD_PID:-}" "${NGROK_PID:-}" "${SELF_WATCHDOG_PID:-}"
         printf '\n[ngrok-api-status]\n'
         cat "$DEBIAN_SSH_NGROK_API_STATUS_FILE" 2>/dev/null || true
         printf '\n[processes]\n'
-        ps -eo pid,ppid,stat,args 2>/dev/null | grep -E 'debian-ssh|ngrok|sshd|busybox httpd' | grep -v grep || true
+        ps -eo pid,ppid,stat,args 2>/dev/null | grep -E 'debian-ssh|ngrok|dropbear|busybox httpd' | grep -v grep || true
         if [ -n "${NGROK_PID:-}" ]; then
             printf '\n[ngrok-proc-status]\n'
             cat "/proc/$NGROK_PID/status" 2>/dev/null || true
@@ -556,49 +525,16 @@ process_running() {
     return 0
 }
 
-sshd_uses_sudo() {
-    case "$DEBIAN_SSH_SUDO_SSHD" in
-        1|true|TRUE|yes|YES|on|ON)
-            [ "$(id -u)" -ne 0 ] || return 1
-            if ! command -v sudo >/dev/null 2>&1; then
-                echo "DEBIAN_SSH_SUDO_SSHD requires sudo, but sudo is not installed" >&2
-                return 2
-            fi
-            if ! sudo -n true >/dev/null 2>&1; then
-                echo "DEBIAN_SSH_SUDO_SSHD requires passwordless sudo" >&2
-                return 2
-            fi
-            return 0
-            ;;
-        0|false|FALSE|no|NO|off|OFF)
-            return 1
-            ;;
-        auto|AUTO)
-            [ "$(id -u)" -ne 0 ] || return 1
-            command -v sudo >/dev/null 2>&1 || return 1
-            sudo -n true >/dev/null 2>&1 || return 1
-            return 0
-            ;;
-        *)
-            echo "invalid DEBIAN_SSH_SUDO_SSHD: ${DEBIAN_SSH_SUDO_SSHD}" >&2
-            return 2
-            ;;
-    esac
-}
-
 sshd_pids() {
     ps -eo pid=,args= 2>/dev/null | awk '
-        $2 == "/usr/sbin/sshd" || $2 == "sshd" || $2 == "sshd:" { print $1 }
+        $2 == "/usr/sbin/dropbear" || $2 == "dropbear" { print $1 }
     '
 }
 
 kill_sshd_pid() {
     signal="$1"
     pid="$2"
-    kill "-$signal" "$pid" 2>/dev/null && return 0
-    [ "$(id -u)" -ne 0 ] || return 0
-    command -v sudo >/dev/null 2>&1 || return 0
-    sudo -n kill "-$signal" "$pid" 2>/dev/null || true
+    kill "-$signal" "$pid" 2>/dev/null || true
 }
 
 stop_process() {
@@ -743,7 +679,7 @@ ngrok_public_url() {
 }
 
 restart_sshd() {
-    echo "sshd is not answering; restarting" >&2
+    echo "SSH daemon is not answering; restarting" >&2
     stop_sshd || true
     start_sshd
 }
@@ -894,9 +830,9 @@ supervise_services() {
         fi
 
         if ! process_running "${SSHD_PID:-}" || ! ssh_ready; then
-            mark_unready "sshd not ready"
+            mark_unready "SSH daemon not ready"
             ngrok_api_failures=0
-            record_entrypoint_unready "sshd"
+            record_entrypoint_unready "SSH daemon"
             restart_sshd
             sleep_supervise_interval
             continue
@@ -987,7 +923,7 @@ load_persisted_config || fail_stay_alive "persisted config load failed"
 require_nonempty_env NGROK_AUTHTOKEN || fail_stay_alive "NGROK_AUTHTOKEN is required"
 persist_required_config || true
 validate_ssh_login_watchdog_config || fail_stay_alive "ssh login watchdog config invalid"
-start_sshd || fail_stay_alive "sshd failed to start"
+start_sshd || fail_stay_alive "SSH daemon failed to start"
 start_ngrok || fail_stay_alive "ngrok failed to start"
 start_self_watchdog || fail_stay_alive "self watchdog failed to start"
 supervise_services

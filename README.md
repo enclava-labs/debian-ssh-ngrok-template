@@ -7,6 +7,8 @@ deployment template.
 - Grants `user` passwordless sudo for package installation inside the running
   instance. The PaaS template must request CAP's managed SSH sudo workload
   profile so setuid sudo and a writable root filesystem are available.
+- Runs dropbear as the non-root SSH daemon. This avoids OpenSSH privilege
+  separation behavior that requires `CAP_SYS_CHROOT` in confidential runtimes.
 - Uses an image-owned `/home/user` directory for SSH state, authorized keys,
   host keys, and user files, so the template still starts when CAP mounts
   `/state` as root-owned runtime state.

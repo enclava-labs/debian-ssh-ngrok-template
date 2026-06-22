@@ -7,8 +7,10 @@ RUN apt-get update \
         busybox \
         ca-certificates \
         curl \
+        dropbear-bin \
         jq \
-        openssh-server \
+        openssh-client \
+        procps \
         sudo \
     && rm -rf /var/lib/apt/lists/* \
     && curl -fsSL "${NGROK_URL}" -o /tmp/ngrok.tgz \
@@ -20,7 +22,7 @@ RUN apt-get update \
     && passwd -d user \
     && printf 'user ALL=(ALL) NOPASSWD:ALL\n' >/etc/sudoers.d/user-nopasswd \
     && chmod 0440 /etc/sudoers.d/user-nopasswd \
-    && mkdir -p /home/user /state /run/sshd \
+    && mkdir -p /home/user /state \
     && chown 10001:10001 /home/user /state
 
 COPY entrypoint.sh /usr/local/bin/debian-ssh-ngrok-entrypoint

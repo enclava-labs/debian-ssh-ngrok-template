@@ -1,8 +1,8 @@
 #!/bin/sh
 set -eu
 
-IMAGE_TAG="${IMAGE_TAG:-debian-ssh-ngrok-template:sshd-config-test}"
-container_name="debian-ssh-ngrok-sshd-config-$$"
+IMAGE_TAG="${IMAGE_TAG:-debian-ssh-ngrok-template:ssh-daemon-config-test}"
+container_name="debian-ssh-ngrok-ssh-daemon-config-$$"
 stub_dir="$(mktemp -d)"
 
 cleanup() {
@@ -31,20 +31,20 @@ docker run -d --name "$container_name" \
     "$IMAGE_TAG" >/dev/null
 
 for _ in $(seq 1 20); do
-    if docker exec "$container_name" test -f /home/user/.ssh/sshd_config 2>/dev/null; then
+    if docker exec "$container_name" test -f /home/user/.ssh/dropbear_ed25519_host_key 2>/dev/null; then
         break
     fi
     sleep 1
 done
 
-if ! docker exec "$container_name" grep -qxF 'LoginGraceTime 60' /home/user/.ssh/sshd_config; then
-    docker exec "$container_name" cat /home/user/.ssh/sshd_config >&2 || true
-    echo "expected sshd_config to bound unauthenticated SSH sessions" >&2
+if ! docker exec "$container_name" test -s /home/user/.ssh/dropbear_ed25519_host_key; then
+    docker exec "$container_name" ls -la /home/user/.ssh >&2 || true
+    echo "expected dropbear host key to be generated in the user home" >&2
     exit 1
 fi
 
-if ! docker exec "$container_name" grep -qxF 'MaxStartups 50:30:200' /home/user/.ssh/sshd_config; then
-    docker exec "$container_name" cat /home/user/.ssh/sshd_config >&2 || true
-    echo "expected sshd_config to tolerate public tunnel connection bursts" >&2
+if docker exec "$container_name" test -e /home/user/.ssh/sshd_config; then
+    docker exec "$container_name" ls -la /home/user/.ssh >&2 || true
+    echo "expected OpenSSH server config not to be written" >&2
     exit 1
 fi

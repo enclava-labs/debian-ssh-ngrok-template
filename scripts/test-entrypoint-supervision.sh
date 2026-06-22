@@ -85,11 +85,11 @@ for _ in $(seq 1 30); do
 done
 if ! docker exec "$container_name" ssh-keyscan -T 2 -t ed25519 -p 2222 127.0.0.1 >/dev/null 2>&1; then
     docker logs "$container_name" >&2 || true
-    echo "expected sshd to answer before restart test" >&2
+    echo "expected SSH daemon to answer before restart test" >&2
     exit 1
 fi
 
-docker exec "$container_name" /bin/sh -eu -c 'sudo -n kill "$(cat /home/user/.ssh/sshd.pid)"'
+docker exec "$container_name" /bin/sh -eu -c 'kill "$(cat /home/user/.ssh/ssh_daemon.pid)"'
 
 for _ in $(seq 1 30); do
     if docker exec "$container_name" ssh-keyscan -T 2 -t ed25519 -p 2222 127.0.0.1 >/dev/null 2>&1; then
@@ -99,5 +99,5 @@ for _ in $(seq 1 30); do
 done
 
 docker logs "$container_name" >&2 || true
-echo "expected entrypoint to restart sshd after it exits" >&2
+echo "expected entrypoint to restart SSH daemon after it exits" >&2
 exit 1
