@@ -16,7 +16,7 @@ AUTHORIZED_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ7cAp6elwfMEiNuvLhVyb1xTceS
 : "${DEBIAN_SSH_RESTART_DELAY_SECONDS:=2}"
 : "${DEBIAN_SSH_RESTART_WRAPPER_CHECK_SECONDS:=5}"
 : "${DEBIAN_SSH_RESTART_WRAPPER_UNREADY_SECONDS:=60}"
-: "${DEBIAN_SSH_SUDO_SSHD:=1}"
+: "${DEBIAN_SSH_SUDO_SSHD:=0}"
 : "${DEBIAN_SSH_SELF_WATCHDOG_CHECK_SECONDS:=5}"
 : "${DEBIAN_SSH_SELF_WATCHDOG_UNREADY_SECONDS:=60}"
 : "${DEBIAN_SSH_WRAPPED:=0}"
@@ -462,7 +462,8 @@ mark_unready() {
 redact_debug_stream() {
     sed -E \
         -e 's/--authtoken[= ]+[^ ]+/--authtoken <redacted>/g' \
-        -e 's/NGROK_AUTHTOKEN=[^ ]+/NGROK_AUTHTOKEN=<redacted>/g'
+        -e 's/NGROK_AUTHTOKEN=[^ ]+/NGROK_AUTHTOKEN=<redacted>/g' \
+        -e 's/("(Authtoken|Token|Cookie)"[[:space:]]*:[[:space:]]*")[^"]+/\1<redacted>/g'
 }
 
 write_debug_snapshot() {

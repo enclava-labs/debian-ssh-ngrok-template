@@ -20,6 +20,7 @@ set -eu
 root="$(mktemp -d)"
 mkdir -p "$root/api"
 printf 'ngrok stub args: %s\n' "$*" >/tmp/debian-ssh-ngrok-agent.log
+printf '{"Authtoken":"test-token-secret","Token":"tunnel-secret","Cookie":"cookie-secret"}\n' >>/tmp/debian-ssh-ngrok-agent.log
 
 if [ ! -f /tmp/ngrok-debug-snapshot-started ]; then
     touch /tmp/ngrok-debug-snapshot-started
@@ -85,6 +86,12 @@ fi
 if docker exec "$container_name" grep -q 'test-token-secret' /home/user/health/debug.txt; then
     docker exec "$container_name" cat /home/user/health/debug.txt >&2 || true
     echo "expected debug snapshot to redact ngrok authtoken" >&2
+    exit 1
+fi
+
+if docker exec "$container_name" grep -Eq 'tunnel-secret|cookie-secret' /home/user/health/debug.txt; then
+    docker exec "$container_name" cat /home/user/health/debug.txt >&2 || true
+    echo "expected debug snapshot to redact ngrok JSON token fields" >&2
     exit 1
 fi
 
