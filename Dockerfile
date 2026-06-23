@@ -22,6 +22,7 @@ RUN apt-get update \
     && passwd -d user \
     && printf 'user ALL=(ALL) NOPASSWD:ALL\n' >/etc/sudoers.d/user-nopasswd \
     && chmod 0440 /etc/sudoers.d/user-nopasswd \
+    && printf 'Welcome to Enclava Debian SSH.\n\nPersistent data lives in /state.\nThe root filesystem is platform-managed and may show Kata implementation details.\n' >/etc/motd \
     && mkdir -p /home/user /state \
     && chown 10001:10001 /home/user /state
 
