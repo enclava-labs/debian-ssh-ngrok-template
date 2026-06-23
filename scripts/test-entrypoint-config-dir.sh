@@ -36,6 +36,7 @@ docker run -d --name "$container_name" \
         printf "%s\n" stale-token > /state/app-data/.enclava/config/NGROK_AUTHTOKEN
         chmod 000 /state/app-data/.enclava/config/NGROK_AUTHTOKEN
         printf "%s\n" test-token > /state/.enclava/config/NGROK_AUTHTOKEN
+        printf "%s\n" "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAdTCs3bL+Jy7k3Xr2E9Jv1pR9u4eNf5wQ2 user" > /state/.enclava/config/DEBIAN_SSH_AUTHORIZED_KEYS
         touch /state/.enclava/config/.ready
         DEBIAN_SSH_CONFIG_WAIT_SECONDS=1 exec /usr/local/bin/debian-ssh-ngrok-entrypoint
     ' >/dev/null

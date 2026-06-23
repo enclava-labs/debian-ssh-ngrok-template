@@ -45,9 +45,11 @@ docker run --rm \
     -eu -c '
         mkdir -p /state/app-data/debian-ssh-ngrok/config
         printf "%s\n" test-token > /state/app-data/debian-ssh-ngrok/config/NGROK_AUTHTOKEN
+        printf "%s\n" "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAdTCs3bL+Jy7k3Xr2E9Jv1pR9u4eNf5wQ2 user" > /state/app-data/debian-ssh-ngrok/config/DEBIAN_SSH_AUTHORIZED_KEYS
         chown -R 10001:10001 /state/app-data
         chmod 700 /state/app-data/debian-ssh-ngrok/config
         chmod 600 /state/app-data/debian-ssh-ngrok/config/NGROK_AUTHTOKEN
+        chmod 600 /state/app-data/debian-ssh-ngrok/config/DEBIAN_SSH_AUTHORIZED_KEYS
     ' >/dev/null
 
 docker run -d --name "$container_name" \

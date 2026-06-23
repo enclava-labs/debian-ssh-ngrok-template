@@ -30,6 +30,7 @@ docker run -d --name "$container_name" \
     --tmpfs /tmp:uid=10001,gid=10001,mode=1777 \
     -v "$stub_dir/ngrok:/usr/local/bin/ngrok:ro" \
     -e NGROK_AUTHTOKEN=test-token \
+    -e DEBIAN_SSH_AUTHORIZED_KEYS="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAdTCs3bL+Jy7k3Xr2E9Jv1pR9u4eNf5wQ2 user" \
     -e DEBIAN_SSH_CONFIG_WAIT_SECONDS=0 \
     "$IMAGE_TAG" >/dev/null
 

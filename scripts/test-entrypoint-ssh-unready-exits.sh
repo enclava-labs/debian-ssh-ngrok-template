@@ -51,6 +51,7 @@ docker run -d --name "$container_name" \
     -v "$stub_dir/ssh-keyscan:/usr/local/bin/ssh-keyscan:ro" \
     -v "$stub_dir/ssh:/usr/local/bin/ssh:ro" \
     -e NGROK_AUTHTOKEN=test-token \
+    -e DEBIAN_SSH_AUTHORIZED_KEYS="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAdTCs3bL+Jy7k3Xr2E9Jv1pR9u4eNf5wQ2 user" \
     -e DEBIAN_SSH_CONFIG_WAIT_SECONDS=0 \
     -e DEBIAN_SSH_SUPERVISE_INTERVAL_SECONDS=1 \
     -e DEBIAN_NGROK_UNREADY_EXIT_SECONDS=4 \

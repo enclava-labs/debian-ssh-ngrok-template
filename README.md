@@ -22,8 +22,18 @@ deployment template.
   By default ngrok assigns a dynamic TCP host:port; set `NGROK_TCP_URL`
   to a reserved ngrok TCP address when the SSH command must remain stable
   across ngrok or pod restarts.
+- Requires `DEBIAN_SSH_AUTHORIZED_KEYS`, one SSH public key per line. The image
+  does not contain any externally usable baked-in authorized key.
 - Publishes the discovered ngrok endpoint on `/ngrok-url.txt`, `/ssh.txt`,
   and `/ngrok.json` through the health HTTP server.
 
 Use the local `../ngrok-secret.txt` value as the confidential
-`NGROK_AUTHTOKEN` template config value. Do not commit it.
+`NGROK_AUTHTOKEN` template config value, and paste the user's SSH public key as
+`DEBIAN_SSH_AUTHORIZED_KEYS`. Do not commit secrets or private keys.
+
+For a stable SSH command, reserve an ngrok TCP address and write
+`NGROK_TCP_URL` before the required config keys, for example
+`6.tcp.eu.ngrok.io:17958`. The workload normalizes optional `tcp://` prefixes,
+persists the reserved address for restarts, passes it to `ngrok tcp --url`,
+publishes the resulting `ssh -p <port> user@<host>` command on `/ssh.txt`, and
+refuses readiness if ngrok publishes a different endpoint.

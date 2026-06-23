@@ -48,6 +48,7 @@ docker run -d --name "$container_one" \
     -eu -c '
         mkdir -p /state/app-data/.enclava/config
         printf "%s\n" test-token > /state/app-data/.enclava/config/NGROK_AUTHTOKEN
+        printf "%s\n" "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAdTCs3bL+Jy7k3Xr2E9Jv1pR9u4eNf5wQ2 user" > /state/app-data/.enclava/config/DEBIAN_SSH_AUTHORIZED_KEYS
         touch /state/app-data/.enclava/config/.ready
         DEBIAN_SSH_CONFIG_WAIT_SECONDS=1 exec /usr/local/bin/debian-ssh-ngrok-entrypoint
     ' >/dev/null
@@ -91,5 +92,5 @@ done
 docker logs "$container_two" >"$output_file" 2>&1 || true
 cat "$output_file" >&2
 docker exec "$container_two" curl -fsS http://127.0.0.1:8080/startup-error.txt >&2 2>/dev/null || true
-echo "expected recovered start to load NGROK_AUTHTOKEN from encrypted state" >&2
+echo "expected recovered start to load required config from encrypted state" >&2
 exit 1
