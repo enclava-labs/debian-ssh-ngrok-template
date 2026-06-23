@@ -48,12 +48,13 @@ digest with cosign and upload the artifact named
 
 After a successful publish, download the artifact and use the single line in
 `dist/debian-ssh-ngrok-template-image.txt` as the PaaS
-`DEBIAN_SSH_NGROK_IMAGE` value. It must stay digest-pinned, for example:
+`DEBIAN_SSH_NGROK_IMAGE` value. It must stay on the official repository and
+digest-pinned, for example:
 
 ```env
 DEBIAN_SSH_NGROK_IMAGE=ghcr.io/enclava-labs/debian-ssh-ngrok-template@sha256:<digest>
 ```
 
-Staging and production PaaS config reject tag-only or placeholder image
-references for this template. Promote the signed digest there before deploying
-PaaS and running the stable SSH canary.
+Staging and production PaaS config reject tag-only, placeholder, or different
+repository image references for this template. Promote the signed digest there
+before deploying PaaS and running the stable SSH canary.
