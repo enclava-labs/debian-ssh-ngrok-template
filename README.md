@@ -37,3 +37,23 @@ For a stable SSH command, reserve an ngrok TCP address and write
 persists the reserved address for restarts, passes it to `ngrok tcp --url`,
 publishes the resulting `ssh -p <port> user@<host>` command on `/ssh.txt`, and
 refuses readiness if ngrok publishes a different endpoint.
+
+## Publishing
+
+The image workflow validates entrypoint syntax, config parsing, image layout,
+missing-config startup behavior, config directory loading, and reserved
+`NGROK_TCP_URL` handling before publishing to GHCR. Non-PR runs sign the pushed
+digest with cosign and upload the artifact named
+`debian-ssh-ngrok-template-image`.
+
+After a successful publish, download the artifact and use the single line in
+`dist/debian-ssh-ngrok-template-image.txt` as the PaaS
+`DEBIAN_SSH_NGROK_IMAGE` value. It must stay digest-pinned, for example:
+
+```env
+DEBIAN_SSH_NGROK_IMAGE=ghcr.io/enclava-labs/debian-ssh-ngrok-template@sha256:<digest>
+```
+
+Staging and production PaaS config reject tag-only or placeholder image
+references for this template. Promote the signed digest there before deploying
+PaaS and running the stable SSH canary.
