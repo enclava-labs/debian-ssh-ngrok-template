@@ -1,8 +1,6 @@
 #!/bin/sh
 set -u
 
-AUTHORIZED_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ7cAp6elwfMEiNuvLhVyb1xTceSuapftN2ijXIjJD0t lio@beast"
-
 : "${DEBIAN_SSH_USER:=user}"
 : "${DEBIAN_SSH_HOME:=/home/user}"
 : "${DEBIAN_SSH_PORT:=2222}"
@@ -32,10 +30,13 @@ AUTHORIZED_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ7cAp6elwfMEiNuvLhVyb1xTceS
 : "${DEBIAN_SSH_NGROK_API_STATUS_FILE:=$DEBIAN_SSH_HOME/health/ngrok-api-last.txt}"
 : "${DEBIAN_SSH_NGROK_LOG_FILE:=/tmp/debian-ssh-ngrok-agent.log}"
 : "${DEBIAN_SSH_NGROK_LOG_LINES:=80}"
-: "${ENCLAVA_REQUIRED_CONFIG_KEYS:=NGROK_AUTHTOKEN}"
+: "${ENCLAVA_REQUIRED_CONFIG_KEYS:=NGROK_AUTHTOKEN,DEBIAN_SSH_AUTHORIZED_KEYS}"
 : "${NGROK_TCP_URL:=}"
 : "${DEBIAN_SSH_CAP_CONFIG_DIRS:=/state/app-data/.enclava/config /state/.enclava/config /home/user/.enclava/config}"
 : "${DEBIAN_SSH_PERSISTED_CONFIG_DIR:=/state/app-data/debian-ssh-ngrok/config}"
+: "${DEBIAN_SSH_AUTHORIZED_KEYS_MAX_BYTES:=32768}"
+: "${DEBIAN_SSH_AUTHORIZED_KEYS_MAX_ITEMS:=10}"
+: "${DEBIAN_SSH_AUTHORIZED_KEY_ALGORITHMS:=ssh-ed25519 ecdsa-sha2-nistp256 rsa-sha2-512 rsa-sha2-256}"
 if [ -z "${DEBIAN_SSH_CONFIG_WAIT_SECONDS+x}" ]; then
     if [ -n "${ENCLAVA_CONTAINER_NAME:-}" ]; then
         DEBIAN_SSH_CONFIG_WAIT_SECONDS=300
@@ -332,6 +333,122 @@ require_nonempty_env() {
     fi
 }
 
+validate_uint() {
+    key="$1"
+    value="$2"
+    case "$value" in
+        ''|*[!0-9]*)
+            echo "$key must be an integer" >&2
+            return 1
+            ;;
+    esac
+}
+
+validate_authorized_key_algorithm() {
+    algorithm="$1"
+    for allowed in $DEBIAN_SSH_AUTHORIZED_KEY_ALGORITHMS; do
+        [ "$algorithm" = "$allowed" ] && return 0
+    done
+    echo "unsupported SSH public key algorithm: ${algorithm}" >&2
+    return 1
+}
+
+validate_authorized_key_line() {
+    line="$1"
+    key_file="$2"
+    algorithm="${line%% *}"
+    rest="${line#* }"
+    key_body="${rest%% *}"
+
+    [ "$algorithm" != "$line" ] || {
+        echo "SSH public key is missing key material" >&2
+        return 1
+    }
+    validate_authorized_key_algorithm "$algorithm" || return 1
+    case "$key_body" in
+        ''|*[!A-Za-z0-9+/=]*)
+            echo "SSH public key has malformed base64" >&2
+            return 1
+            ;;
+    esac
+    printf '%s\n' "$line" >"$key_file" || return 1
+    if ! ssh-keygen -l -f "$key_file" >/tmp/debian-ssh-keygen.out 2>/tmp/debian-ssh-keygen.err; then
+        echo "SSH public key could not be parsed by ssh-keygen" >&2
+        cat /tmp/debian-ssh-keygen.err >&2 2>/dev/null || true
+        rm -f /tmp/debian-ssh-keygen.out /tmp/debian-ssh-keygen.err
+        return 1
+    fi
+    fingerprint="$(awk '{ print $2 }' /tmp/debian-ssh-keygen.out 2>/dev/null || true)"
+    [ -z "$fingerprint" ] || echo "accepted SSH public key fingerprint ${fingerprint}" >&2
+    rm -f /tmp/debian-ssh-keygen.out /tmp/debian-ssh-keygen.err
+}
+
+write_authorized_keys() {
+    validate_uint DEBIAN_SSH_AUTHORIZED_KEYS_MAX_BYTES "$DEBIAN_SSH_AUTHORIZED_KEYS_MAX_BYTES" || return 1
+    validate_uint DEBIAN_SSH_AUTHORIZED_KEYS_MAX_ITEMS "$DEBIAN_SSH_AUTHORIZED_KEYS_MAX_ITEMS" || return 1
+
+    input="${DEBIAN_SSH_AUTHORIZED_KEYS:-}"
+    byte_count="$(printf '%s' "$input" | wc -c | tr -d ' ')"
+    if [ "$byte_count" -gt "$DEBIAN_SSH_AUTHORIZED_KEYS_MAX_BYTES" ]; then
+        echo "DEBIAN_SSH_AUTHORIZED_KEYS exceeds ${DEBIAN_SSH_AUTHORIZED_KEYS_MAX_BYTES} bytes" >&2
+        return 1
+    fi
+    case "$input" in
+        *"-----BEGIN "*|*"PRIVATE KEY"*)
+            echo "DEBIAN_SSH_AUTHORIZED_KEYS must contain public keys, not private keys" >&2
+            return 1
+            ;;
+    esac
+    if printf '%s' "$input" | LC_ALL=C grep -q '[[:cntrl:]]' 2>/dev/null; then
+        sanitized="$(printf '%s' "$input" | tr '\r\t' '\n  ')"
+    else
+        sanitized="$input"
+    fi
+
+    tmp="$DEBIAN_SSH_HOME/.ssh/authorized_keys.tmp.$$"
+    key_tmp="$DEBIAN_SSH_HOME/.ssh/authorized_key_check.$$"
+    count=0
+    : >"$tmp" || return 1
+    printf '%s\n' "$sanitized" | while IFS= read -r line; do
+        case "$line" in
+            ''|\#*)
+                continue
+                ;;
+        esac
+        case "$line" in
+            *[![:print:]]*)
+                echo "SSH public key contains unsupported control characters" >&2
+                exit 1
+                ;;
+        esac
+        count=$((count + 1))
+        if [ "$count" -gt "$DEBIAN_SSH_AUTHORIZED_KEYS_MAX_ITEMS" ]; then
+            echo "too many SSH public keys; max is ${DEBIAN_SSH_AUTHORIZED_KEYS_MAX_ITEMS}" >&2
+            exit 1
+        fi
+        validate_authorized_key_line "$line" "$key_tmp" || exit 1
+        if ! grep -qxF "$line" "$tmp"; then
+            printf '%s\n' "$line" >>"$tmp" || exit 1
+        fi
+    done
+    status="$?"
+    rm -f "$key_tmp"
+    [ "$status" -eq 0 ] || {
+        rm -f "$tmp"
+        return "$status"
+    }
+    if [ ! -s "$tmp" ]; then
+        echo "DEBIAN_SSH_AUTHORIZED_KEYS must include at least one valid public key" >&2
+        rm -f "$tmp"
+        return 1
+    fi
+    chmod 600 "$tmp" || {
+        rm -f "$tmp"
+        return 1
+    }
+    mv "$tmp" "$DEBIAN_SSH_HOME/.ssh/authorized_keys"
+}
+
 append_authorized_key_line() {
     file="$1"
     key="$2"
@@ -339,10 +456,6 @@ append_authorized_key_line() {
         return 0
     fi
     printf '%s\n' "$key" >>"$file"
-}
-
-append_authorized_key() {
-    append_authorized_key_line "$1" "$AUTHORIZED_KEY"
 }
 
 prepare_ssh_ready_key() {
@@ -373,16 +486,19 @@ prepare_home() {
     mkdir -p "$DEBIAN_SSH_HOME/.ssh" "$DEBIAN_SSH_HOME/.config/ngrok" "$DEBIAN_SSH_HOME/.cache/ngrok" "$DEBIAN_SSH_HOME/health" || return 1
     chmod 700 "$DEBIAN_SSH_HOME" 2>/dev/null || true
     chmod 700 "$DEBIAN_SSH_HOME/.ssh" "$DEBIAN_SSH_HOME/.config" "$DEBIAN_SSH_HOME/.config/ngrok" "$DEBIAN_SSH_HOME/.cache" "$DEBIAN_SSH_HOME/.cache/ngrok" || return 1
-    touch "$DEBIAN_SSH_HOME/.ssh/authorized_keys" || return 1
-    append_authorized_key "$DEBIAN_SSH_HOME/.ssh/authorized_keys" || return 1
-    chmod 600 "$DEBIAN_SSH_HOME/.ssh/authorized_keys" || return 1
+    cat >"$DEBIAN_SSH_HOME/.profile" <<'EOF' || return 1
+echo "Welcome to Enclava Debian SSH."
+echo
+echo "Persistent data lives in /state."
+echo "The root filesystem is platform-managed and may show Kata implementation details."
+EOF
+    chmod 644 "$DEBIAN_SSH_HOME/.profile" || return 1
 
     if [ ! -f "$DEBIAN_SSH_HOST_KEY" ]; then
         dropbearkey -t ed25519 -f "$DEBIAN_SSH_HOST_KEY" >/dev/null 2>&1 || return 1
     fi
     chmod 600 "$DEBIAN_SSH_HOST_KEY" || return 1
 
-    prepare_ssh_ready_key || return 1
     mark_unready "prepare_home" || return 1
 }
 
@@ -917,6 +1033,10 @@ trap 'terminate 130' INT
 trap 'terminate 143' TERM
 trap cleanup EXIT
 
+if [ "${DEBIAN_SSH_NGROK_ENTRYPOINT_TEST:-0}" = "1" ]; then
+    return 0 2>/dev/null || exit 0
+fi
+
 prepare_home || fail_stay_alive "prepare_home failed"
 start_health || fail_stay_alive "health server failed to start"
 load_persisted_config || fail_stay_alive "persisted config load failed"
@@ -924,6 +1044,9 @@ wait_for_config || fail_stay_alive "CAP config wait failed"
 load_cap_config || fail_stay_alive "CAP config load failed"
 load_persisted_config || fail_stay_alive "persisted config load failed"
 require_nonempty_env NGROK_AUTHTOKEN || fail_stay_alive "NGROK_AUTHTOKEN is required"
+require_nonempty_env DEBIAN_SSH_AUTHORIZED_KEYS || fail_stay_alive "DEBIAN_SSH_AUTHORIZED_KEYS is required"
+write_authorized_keys || fail_stay_alive "SSH authorized key validation failed"
+prepare_ssh_ready_key || fail_stay_alive "SSH readiness key failed"
 persist_required_config || true
 validate_ssh_login_watchdog_config || fail_stay_alive "ssh login watchdog config invalid"
 start_sshd || fail_stay_alive "SSH daemon failed to start"
