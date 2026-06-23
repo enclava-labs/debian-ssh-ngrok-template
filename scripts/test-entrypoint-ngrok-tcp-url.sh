@@ -21,7 +21,7 @@ printf '%s\n' "$@" > /tmp/ngrok-args
 root="$(mktemp -d)"
 mkdir -p "$root/api"
 cat >"$root/api/tunnels" <<'JSON'
-{"tunnels":[{"public_url":"tcp://reserved.tcp.example.com:22222"}]}
+{"tunnels":[{"public_url":"tcp://6.tcp.eu.ngrok.io:22222"}]}
 JSON
 exec busybox httpd -f -p 127.0.0.1:4040 -h "$root"
 STUB
@@ -34,7 +34,7 @@ docker run -d --name "$container_name" \
     -e PATH="/test-bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
     -e NGROK_AUTHTOKEN=test-token \
     -e DEBIAN_SSH_AUTHORIZED_KEYS="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAdTCs3bL+Jy7k3Xr2E9Jv1pR9u4eNf5wQ2 user" \
-    -e NGROK_TCP_URL=tcp://reserved.tcp.example.com:22222 \
+    -e NGROK_TCP_URL=tcp://6.TCP.EU.NGROK.IO:22222 \
     -e DEBIAN_SSH_CONFIG_WAIT_SECONDS=0 \
     -v "$stub_dir:/test-bin:ro" \
     "$IMAGE_TAG" >/dev/null
@@ -53,7 +53,7 @@ if ! docker exec "$container_name" grep -qx -- '--url' "$args_file"; then
     exit 1
 fi
 
-if ! docker exec "$container_name" grep -qx -- 'tcp://reserved.tcp.example.com:22222' "$args_file"; then
+if ! docker exec "$container_name" grep -qx -- '6.tcp.eu.ngrok.io:22222' "$args_file"; then
     docker logs "$container_name" >&2 || true
     docker exec "$container_name" cat "$args_file" >&2 || true
     echo "expected entrypoint to pass the configured NGROK_TCP_URL value" >&2
