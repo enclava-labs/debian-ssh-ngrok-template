@@ -14,12 +14,14 @@ on:
       - "Dockerfile"
       - "entrypoint.sh"
       - "README.md"
+      - "scripts/**"
   pull_request:
     paths:
       - ".github/workflows/image.yml"
       - "Dockerfile"
       - "entrypoint.sh"
       - "README.md"
+      - "scripts/**"
 
 jobs:
   build-and-push:
@@ -50,6 +52,12 @@ jobs:
             echo "::error::Manual image tags must match ^manual-[a-z0-9][a-z0-9_.-]{0,119}$ to avoid spoofing protected deployment tags."
             exit 1
           fi
+
+      - name: Validate entrypoint scripts
+        run: |
+          bash -n entrypoint.sh scripts/*.sh
+          sh -n entrypoint.sh scripts/*.sh
+          scripts/test-entrypoint-config-validation.sh
 
       - name: Log in to GHCR
         if: github.event_name != 'pull_request'
