@@ -31,6 +31,7 @@ set -u
 : "${DEBIAN_SSH_NGROK_LOG_FILE:=/tmp/debian-ssh-ngrok-agent.log}"
 : "${DEBIAN_SSH_NGROK_LOG_LINES:=80}"
 : "${ENCLAVA_REQUIRED_CONFIG_KEYS:=NGROK_AUTHTOKEN,DEBIAN_SSH_AUTHORIZED_KEYS}"
+: "${DEBIAN_SSH_REQUIRE_NGROK_TCP_URL:=1}"
 : "${NGROK_TCP_URL:=}"
 : "${DEBIAN_SSH_CAP_CONFIG_DIRS:=/state/app-data/.enclava/config /state/.enclava/config /home/user/.enclava/config}"
 : "${DEBIAN_SSH_PERSISTED_CONFIG_DIR:=/state/app-data/debian-ssh-ngrok/config}"
@@ -255,12 +256,67 @@ wait_for_config() {
     echo "CAP config was not marked ready after ${seconds}s; continuing with current environment" >&2
 }
 
+ngrok_tcp_url_required() {
+    case "${DEBIAN_SSH_REQUIRE_NGROK_TCP_URL:-1}" in
+        1|true|TRUE|yes|YES|on|ON)
+            return 0
+            ;;
+        0|false|FALSE|no|NO|off|OFF)
+            return 2
+            ;;
+        *)
+            return 2
+            ;;
+    esac
+}
+
+validate_ngrok_tcp_url_requirement_config() {
+    ngrok_tcp_url_required
+    status="$?"
+    case "$status" in
+        0)
+            return 0
+            ;;
+        *)
+            echo "DEBIAN_SSH_REQUIRE_NGROK_TCP_URL=0 is not supported; NGROK_TCP_URL is required for stable SSH" >&2
+            return 1
+            ;;
+    esac
+}
+
+config_key_list_contains() {
+    keys="$1"
+    key="$2"
+    case " $keys " in
+        *" $key "*)
+            return 0
+            ;;
+    esac
+    return 1
+}
+
 required_config_keys() {
-    printf '%s' "${ENCLAVA_REQUIRED_CONFIG_KEYS:-}" | tr ',' ' '
+    keys="$(printf '%s' "${ENCLAVA_REQUIRED_CONFIG_KEYS:-}" | tr ',' ' ')"
+    ngrok_tcp_url_required || return $?
+    if ! config_key_list_contains "$keys" NGROK_TCP_URL; then
+        if [ -n "$keys" ]; then
+            keys="NGROK_TCP_URL $keys"
+        else
+            keys="NGROK_TCP_URL"
+        fi
+    fi
+    printf '%s\n' "$keys"
 }
 
 persisted_config_keys() {
-    printf '%s %s\n' "$(required_config_keys)" NGROK_TCP_URL
+    keys="$(required_config_keys)" || return 1
+    if config_key_list_contains "$keys" NGROK_TCP_URL; then
+        printf '%s\n' "$keys"
+    elif [ -n "$keys" ]; then
+        printf '%s %s\n' "$keys" NGROK_TCP_URL
+    else
+        printf '%s\n' NGROK_TCP_URL
+    fi
 }
 
 load_cap_config() {
@@ -352,24 +408,34 @@ normalize_ngrok_tcp_url() {
     value="$(printf '%s' "$1" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
     [ -n "$value" ] || return 0
     value="$(printf '%s' "$value" | sed 's/^[Tt][Cc][Pp]:\/\///' | tr '[:upper:]' '[:lower:]')"
-    if ! printf '%s\n' "$value" | grep -Eq '^[a-z0-9-]+\.tcp(\.[a-z0-9-]+)?\.ngrok\.(io|app):[0-9]{1,5}$'; then
+    ngrok_host="${value%:*}"
+    ngrok_port="${value##*:}"
+    ngrok_host="${ngrok_host%.}"
+    value="${ngrok_host}:${ngrok_port}"
+    ngrok_label='[a-z0-9]([a-z0-9-]*[a-z0-9])?'
+    if ! printf '%s\n' "$value" | grep -Eq "^${ngrok_label}\\.tcp(\\.${ngrok_label})?\\.ngrok\\.(io|app):[0-9]{1,5}$"; then
         echo "NGROK_TCP_URL must be a reserved ngrok TCP address such as 6.tcp.eu.ngrok.io:17958" >&2
         return 1
     fi
-    port="${value##*:}"
-    port_number="$(printf '%s\n' "$port" | sed 's/^0*//')"
-    [ -n "$port_number" ] || port_number=0
-    if [ "$port_number" -lt 1 ] || [ "$port_number" -gt 65535 ]; then
+    ngrok_port_number="$(printf '%s\n' "$ngrok_port" | sed 's/^0*//')"
+    [ -n "$ngrok_port_number" ] || ngrok_port_number=0
+    if [ "$ngrok_port_number" -lt 1 ] || [ "$ngrok_port_number" -gt 65535 ]; then
         echo "NGROK_TCP_URL port must be between 1 and 65535" >&2
         return 1
     fi
-    printf '%s:%s\n' "${value%:*}" "$port_number"
+    printf '%s:%s\n' "$ngrok_host" "$ngrok_port_number"
 }
 
 normalize_ngrok_tcp_url_config() {
     [ -n "${NGROK_TCP_URL:-}" ] || return 0
-    NGROK_TCP_URL="$(normalize_ngrok_tcp_url "$NGROK_TCP_URL")" || return 1
+    ngrok_normalized_tcp_url="$(normalize_ngrok_tcp_url "$NGROK_TCP_URL")" || return 1
+    NGROK_TCP_URL="$ngrok_normalized_tcp_url"
     export NGROK_TCP_URL
+}
+
+require_ngrok_tcp_url_if_needed() {
+    ngrok_tcp_url_required || return $?
+    require_nonempty_env NGROK_TCP_URL
 }
 
 ngrok_public_url_matches_reserved() {
@@ -576,16 +642,10 @@ agent:
   log_format: json
   log_level: debug
 EOF
-    if [ -n "$NGROK_TCP_URL" ]; then
-        ngrok tcp "127.0.0.1:${DEBIAN_SSH_PORT}" \
-            --url "$NGROK_TCP_URL" \
-            --authtoken "$NGROK_AUTHTOKEN" \
-            --config "$DEBIAN_SSH_HOME/.config/ngrok/ngrok.yml" &
-    else
-        ngrok tcp "127.0.0.1:${DEBIAN_SSH_PORT}" \
-            --authtoken "$NGROK_AUTHTOKEN" \
-            --config "$DEBIAN_SSH_HOME/.config/ngrok/ngrok.yml" &
-    fi
+    ngrok tcp "127.0.0.1:${DEBIAN_SSH_PORT}" \
+        --url "$NGROK_TCP_URL" \
+        --authtoken "$NGROK_AUTHTOKEN" \
+        --config "$DEBIAN_SSH_HOME/.config/ngrok/ngrok.yml" &
     NGROK_PID="$!"
 }
 
@@ -651,7 +711,12 @@ write_startup_error() {
 
 mark_ready() {
     public_url="$1"
-    endpoint="${public_url#tcp://}"
+    if [ -n "${NGROK_TCP_URL:-}" ]; then
+        endpoint="$(normalize_ngrok_tcp_url "$public_url")" || return 1
+        public_url="tcp://${endpoint}"
+    else
+        endpoint="${public_url#tcp://}"
+    fi
     host="${endpoint%:*}"
     port="${endpoint##*:}"
 
@@ -1032,7 +1097,13 @@ supervise_services() {
             fi
             ngrok_api_failures=0
             entrypoint_unready_seconds=0
-            mark_ready "$public_url"
+            if ! mark_ready "$public_url"; then
+                mark_unready "ngrok public endpoint could not be rendered"
+                record_entrypoint_unready "ngrok stable endpoint"
+                restart_ngrok
+                sleep_supervise_interval
+                continue
+            fi
         else
             ngrok_api_failures=$((ngrok_api_failures + 1))
             mark_unready "ngrok API did not publish tcp tunnel"
@@ -1085,12 +1156,14 @@ fi
 
 prepare_home || fail_stay_alive "prepare_home failed"
 start_health || fail_stay_alive "health server failed to start"
+validate_ngrok_tcp_url_requirement_config || fail_stay_alive "stable ngrok TCP URL requirement config invalid"
 load_persisted_config || fail_stay_alive "persisted config load failed"
 wait_for_config || fail_stay_alive "CAP config wait failed"
 load_cap_config || fail_stay_alive "CAP config load failed"
 load_persisted_config || fail_stay_alive "persisted config load failed"
 require_nonempty_env NGROK_AUTHTOKEN || fail_stay_alive "NGROK_AUTHTOKEN is required"
 require_nonempty_env DEBIAN_SSH_AUTHORIZED_KEYS || fail_stay_alive "DEBIAN_SSH_AUTHORIZED_KEYS is required"
+require_ngrok_tcp_url_if_needed || fail_stay_alive "NGROK_TCP_URL is required"
 normalize_ngrok_tcp_url_config || fail_stay_alive "NGROK_TCP_URL validation failed"
 write_authorized_keys || fail_stay_alive "SSH authorized key validation failed"
 prepare_ssh_ready_key || fail_stay_alive "SSH readiness key failed"

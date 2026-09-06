@@ -16,7 +16,7 @@ cat >"$stub_dir/ngrok" <<'STUB'
 root="/tmp/ngrok-root"
 mkdir -p "$root/api"
 cat >"$root/api/tunnels" <<'JSON'
-{"tunnels":[{"public_url":"tcp://127.0.0.1:5555"}]}
+{"tunnels":[{"public_url":"tcp://6.tcp.eu.ngrok.io:5555"}]}
 JSON
 exec busybox httpd -f -p 127.0.0.1:4040 -h "$root"
 STUB
@@ -30,7 +30,8 @@ docker run -d --name "$container_name" \
     --tmpfs /tmp:uid=10001,gid=10001,mode=1777 \
     -v "$stub_dir/ngrok:/usr/local/bin/ngrok:ro" \
     -e NGROK_AUTHTOKEN=test-token \
-    -e DEBIAN_SSH_AUTHORIZED_KEYS="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAdTCs3bL+Jy7k3Xr2E9Jv1pR9u4eNf5wQ2 user" \
+    -e NGROK_TCP_URL=6.tcp.eu.ngrok.io:5555 \
+    -e DEBIAN_SSH_AUTHORIZED_KEYS="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFs+9CpiYHcxHSrgrn+v6Hla6CkuQCkWfmL0SUlVuezO debian-ssh-ngrok-docker-test" \
     -e DEBIAN_SSH_CONFIG_WAIT_SECONDS=0 \
     "$IMAGE_TAG" >/dev/null
 

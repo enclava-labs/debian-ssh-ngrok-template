@@ -16,7 +16,7 @@ cat >"$stub_dir/ngrok" <<'STUB'
 root="/tmp/ngrok-root"
 mkdir -p "$root/api"
 cat > "$root/api/tunnels" <<'JSON'
-{"tunnels":[{"public_url":"tcp://127.0.0.1:5555"}]}
+{"tunnels":[{"public_url":"tcp://6.tcp.eu.ngrok.io:5555"}]}
 JSON
 exec busybox httpd -f -p 127.0.0.1:4040 -h "$root"
 STUB
@@ -51,7 +51,8 @@ docker run -d --name "$container_name" \
     -v "$stub_dir/ssh-keyscan:/usr/local/bin/ssh-keyscan:ro" \
     -v "$stub_dir/ssh:/usr/local/bin/ssh:ro" \
     -e NGROK_AUTHTOKEN=test-token \
-    -e DEBIAN_SSH_AUTHORIZED_KEYS="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAdTCs3bL+Jy7k3Xr2E9Jv1pR9u4eNf5wQ2 user" \
+    -e NGROK_TCP_URL=6.tcp.eu.ngrok.io:5555 \
+    -e DEBIAN_SSH_AUTHORIZED_KEYS="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFs+9CpiYHcxHSrgrn+v6Hla6CkuQCkWfmL0SUlVuezO debian-ssh-ngrok-docker-test" \
     -e DEBIAN_SSH_CONFIG_WAIT_SECONDS=0 \
     -e DEBIAN_SSH_SUPERVISE_INTERVAL_SECONDS=1 \
     -e DEBIAN_NGROK_UNREADY_EXIT_SECONDS=4 \
@@ -59,13 +60,13 @@ docker run -d --name "$container_name" \
     "$IMAGE_TAG" >/dev/null
 
 for _ in $(seq 1 20); do
-    if docker exec "$container_name" grep -qxF 'ssh -p 5555 user@127.0.0.1' /home/user/health/ssh.txt 2>/dev/null; then
+    if docker exec "$container_name" grep -qxF 'ssh -p 5555 user@6.tcp.eu.ngrok.io' /home/user/health/ssh.txt 2>/dev/null; then
         break
     fi
     sleep 1
 done
 
-if ! docker exec "$container_name" grep -qxF 'ssh -p 5555 user@127.0.0.1' /home/user/health/ssh.txt 2>/dev/null; then
+if ! docker exec "$container_name" grep -qxF 'ssh -p 5555 user@6.tcp.eu.ngrok.io' /home/user/health/ssh.txt 2>/dev/null; then
     docker logs "$container_name" >&2 || true
     echo "expected initial ready endpoint before ssh unready test" >&2
     exit 1
@@ -73,7 +74,7 @@ fi
 
 sleep 8
 
-if ! docker exec "$container_name" grep -qxF 'ssh -p 5555 user@127.0.0.1' /home/user/health/ssh.txt 2>/dev/null; then
+if ! docker exec "$container_name" grep -qxF 'ssh -p 5555 user@6.tcp.eu.ngrok.io' /home/user/health/ssh.txt 2>/dev/null; then
     docker logs "$container_name" >&2 || true
     docker exec "$container_name" cat /home/user/health/debug.txt >&2 2>/dev/null || true
     echo "expected steady-state readiness not to depend on active ssh-keyscan probes" >&2

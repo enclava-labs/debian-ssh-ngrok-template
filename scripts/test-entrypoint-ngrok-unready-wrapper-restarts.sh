@@ -22,12 +22,12 @@ mkdir -p "$root/api"
 
 if [ "${DEBIAN_SSH_WRAPPER_RESTART_COUNT:-0}" -gt 0 ]; then
     cat >"$root/api/tunnels" <<'JSON'
-{"tunnels":[{"public_url":"tcp://127.0.0.1:6666"}]}
+{"tunnels":[{"public_url":"tcp://6.tcp.eu.ngrok.io:5555"}]}
 JSON
 elif [ ! -f /tmp/ngrok-initial-started ]; then
     touch /tmp/ngrok-initial-started
     cat >"$root/api/tunnels" <<'JSON'
-{"tunnels":[{"public_url":"tcp://127.0.0.1:5555"}]}
+{"tunnels":[{"public_url":"tcp://6.tcp.eu.ngrok.io:5555"}]}
 JSON
     (
         sleep 4
@@ -51,7 +51,8 @@ docker run -d --name "$container_name" \
     --tmpfs /tmp:uid=10001,gid=10001,mode=1777 \
     -e PATH="/test-bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
     -e NGROK_AUTHTOKEN=test-token \
-    -e DEBIAN_SSH_AUTHORIZED_KEYS="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAdTCs3bL+Jy7k3Xr2E9Jv1pR9u4eNf5wQ2 user" \
+    -e NGROK_TCP_URL=6.tcp.eu.ngrok.io:5555 \
+    -e DEBIAN_SSH_AUTHORIZED_KEYS="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFs+9CpiYHcxHSrgrn+v6Hla6CkuQCkWfmL0SUlVuezO debian-ssh-ngrok-docker-test" \
     -e DEBIAN_SSH_CONFIG_WAIT_SECONDS=0 \
     -e DEBIAN_SSH_SUPERVISE_INTERVAL_SECONDS=1 \
     -e DEBIAN_NGROK_API_FAILURE_RESTARTS=1 \
@@ -62,20 +63,25 @@ docker run -d --name "$container_name" \
     "$IMAGE_TAG" >/dev/null
 
 for _ in $(seq 1 20); do
-    if docker exec "$container_name" grep -qxF 'ssh -p 5555 user@127.0.0.1' /home/user/health/ssh.txt 2>/dev/null; then
+    if docker exec "$container_name" grep -qxF 'ssh -p 5555 user@6.tcp.eu.ngrok.io' /home/user/health/ssh.txt 2>/dev/null; then
         break
     fi
     sleep 1
 done
-if ! docker exec "$container_name" grep -qxF 'ssh -p 5555 user@127.0.0.1' /home/user/health/ssh.txt 2>/dev/null; then
+if ! docker exec "$container_name" grep -qxF 'ssh -p 5555 user@6.tcp.eu.ngrok.io' /home/user/health/ssh.txt 2>/dev/null; then
     docker logs "$container_name" >&2 || true
     echo "expected initial ngrok endpoint before wrapper restart test" >&2
     exit 1
 fi
+initial_mtime="$(docker exec "$container_name" stat -c %Y /home/user/health/ssh.txt)"
 
 for _ in $(seq 1 30); do
-    if docker exec "$container_name" grep -qxF 'ssh -p 6666 user@127.0.0.1' /home/user/health/ssh.txt 2>/dev/null; then
-        exit 0
+    current="$(docker exec "$container_name" cat /home/user/health/ssh.txt 2>/dev/null || true)"
+    if [ "$current" = "ssh -p 5555 user@6.tcp.eu.ngrok.io" ]; then
+        current_mtime="$(docker exec "$container_name" stat -c %Y /home/user/health/ssh.txt 2>/dev/null || echo 0)"
+        if [ "$current_mtime" -gt "$initial_mtime" ]; then
+            exit 0
+        fi
     fi
     sleep 1
 done

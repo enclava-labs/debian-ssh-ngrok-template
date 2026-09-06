@@ -23,7 +23,7 @@ set -eu
 root="$(mktemp -d)"
 mkdir -p "$root/api"
 cat >"$root/api/tunnels" <<'JSON'
-{"tunnels":[{"public_url":"tcp://127.0.0.1:5555"}]}
+{"tunnels":[{"public_url":"tcp://6.tcp.eu.ngrok.io:5555"}]}
 JSON
 exec busybox httpd -f -p 127.0.0.1:4040 -h "$root"
 STUB
@@ -35,7 +35,8 @@ docker run -d --name "$container_name" \
     --tmpfs /tmp:uid=10001,gid=10001,mode=1777 \
     -e PATH="/test-bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
     -e NGROK_AUTHTOKEN=test-token \
-    -e DEBIAN_SSH_AUTHORIZED_KEYS="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAdTCs3bL+Jy7k3Xr2E9Jv1pR9u4eNf5wQ2 user" \
+    -e NGROK_TCP_URL=6.tcp.eu.ngrok.io:5555 \
+    -e DEBIAN_SSH_AUTHORIZED_KEYS="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFs+9CpiYHcxHSrgrn+v6Hla6CkuQCkWfmL0SUlVuezO debian-ssh-ngrok-docker-test" \
     -e DEBIAN_SSH_CONFIG_WAIT_SECONDS=0 \
     -e DEBIAN_SSH_SUPERVISE_INTERVAL_SECONDS=999 \
     -e DEBIAN_SSH_READY_MARKER=/proc/debian-ssh-ngrok-ready-seen \
@@ -45,12 +46,12 @@ docker run -d --name "$container_name" \
     "$IMAGE_TAG" >/dev/null
 
 for _ in $(seq 1 30); do
-    if docker exec "$container_name" grep -qxF 'ssh -p 5555 user@127.0.0.1' /home/user/health/ssh.txt 2>/dev/null; then
+    if docker exec "$container_name" grep -qxF 'ssh -p 5555 user@6.tcp.eu.ngrok.io' /home/user/health/ssh.txt 2>/dev/null; then
         break
     fi
     sleep 1
 done
-if ! docker exec "$container_name" grep -qxF 'ssh -p 5555 user@127.0.0.1' /home/user/health/ssh.txt 2>/dev/null; then
+if ! docker exec "$container_name" grep -qxF 'ssh -p 5555 user@6.tcp.eu.ngrok.io' /home/user/health/ssh.txt 2>/dev/null; then
     docker logs "$container_name" >&2 || true
     echo "expected initial ready endpoint before self-watchdog test" >&2
     exit 1

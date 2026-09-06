@@ -31,7 +31,7 @@ set -eu
 root="$(mktemp -d)"
 mkdir -p "$root/api"
 cat >"$root/api/tunnels" <<'JSON'
-{"tunnels":[{"public_url":"tcp://127.0.0.1:5555"}]}
+{"tunnels":[{"public_url":"tcp://6.tcp.eu.ngrok.io:5555"}]}
 JSON
 exec busybox httpd -f -p 127.0.0.1:4040 -h "$root"
 STUB
@@ -45,7 +45,7 @@ docker run --rm \
     -eu -c '
         mkdir -p /state/app-data/debian-ssh-ngrok/config
         printf "%s\n" test-token > /state/app-data/debian-ssh-ngrok/config/NGROK_AUTHTOKEN
-        printf "%s\n" "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAdTCs3bL+Jy7k3Xr2E9Jv1pR9u4eNf5wQ2 user" > /state/app-data/debian-ssh-ngrok/config/DEBIAN_SSH_AUTHORIZED_KEYS
+        printf "%s\n" "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFs+9CpiYHcxHSrgrn+v6Hla6CkuQCkWfmL0SUlVuezO debian-ssh-ngrok-docker-test" > /state/app-data/debian-ssh-ngrok/config/DEBIAN_SSH_AUTHORIZED_KEYS
         chown -R 10001:10001 /state/app-data
         chmod 700 /state/app-data/debian-ssh-ngrok/config
         chmod 600 /state/app-data/debian-ssh-ngrok/config/NGROK_AUTHTOKEN
@@ -56,6 +56,7 @@ docker run -d --name "$container_name" \
     -v "$state_dir:/state" \
     --tmpfs /tmp:uid=10001,gid=10001,mode=1777 \
     -e PATH="/test-bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+    -e NGROK_TCP_URL=6.tcp.eu.ngrok.io:5555 \
     -e DEBIAN_SSH_CONFIG_WAIT_SECONDS=30 \
     -v "$stub_dir:/test-bin:ro" \
     "$IMAGE_TAG" >/dev/null

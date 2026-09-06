@@ -31,7 +31,8 @@ docker run -d --name "$container_name" \
     --tmpfs /tmp:uid=10001,gid=10001,mode=1777 \
     -e PATH="/test-bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
     -e NGROK_AUTHTOKEN=test-token \
-    -e DEBIAN_SSH_AUTHORIZED_KEYS="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAdTCs3bL+Jy7k3Xr2E9Jv1pR9u4eNf5wQ2 user" \
+    -e NGROK_TCP_URL=6.tcp.eu.ngrok.io:5555 \
+    -e DEBIAN_SSH_AUTHORIZED_KEYS="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFs+9CpiYHcxHSrgrn+v6Hla6CkuQCkWfmL0SUlVuezO debian-ssh-ngrok-docker-test" \
     -e DEBIAN_SSH_CONFIG_WAIT_SECONDS=0 \
     -e DEBIAN_SSH_SUPERVISE_INTERVAL_SECONDS=1 \
     -e DEBIAN_NGROK_API_FAILURE_RESTARTS=1 \

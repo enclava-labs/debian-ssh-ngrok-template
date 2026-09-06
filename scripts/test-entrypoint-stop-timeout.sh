@@ -22,7 +22,7 @@ root="/tmp/ngrok-root"
 started="/tmp/ngrok-started"
 mkdir -p "$root/api"
 cat >"$root/api/tunnels" <<'JSON'
-{"tunnels":[{"public_url":"tcp://127.0.0.1:5555"}]}
+{"tunnels":[{"public_url":"tcp://6.tcp.eu.ngrok.io:5555"}]}
 JSON
 
 if [ ! -f "$started" ]; then
@@ -50,9 +50,9 @@ docker run -d --name "$container_name" \
     -eu -c '
         mkdir -p /state/.enclava/config
         printf "%s\n" test-token > /state/.enclava/config/NGROK_AUTHTOKEN
-        printf "%s\n" "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAdTCs3bL+Jy7k3Xr2E9Jv1pR9u4eNf5wQ2 user" > /state/.enclava/config/DEBIAN_SSH_AUTHORIZED_KEYS
+        printf "%s\n" "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFs+9CpiYHcxHSrgrn+v6Hla6CkuQCkWfmL0SUlVuezO debian-ssh-ngrok-docker-test" > /state/.enclava/config/DEBIAN_SSH_AUTHORIZED_KEYS
         touch /state/.enclava/config/.ready
-        DEBIAN_NGROK_API_FAILURE_RESTARTS=1 DEBIAN_SSH_CONFIG_WAIT_SECONDS=1 DEBIAN_SSH_SUPERVISE_INTERVAL_SECONDS=1 DEBIAN_STOP_TIMEOUT_SECONDS=2 exec /usr/local/bin/debian-ssh-ngrok-entrypoint
+        NGROK_TCP_URL=6.tcp.eu.ngrok.io:5555 DEBIAN_NGROK_API_FAILURE_RESTARTS=1 DEBIAN_SSH_CONFIG_WAIT_SECONDS=1 DEBIAN_SSH_SUPERVISE_INTERVAL_SECONDS=1 DEBIAN_STOP_TIMEOUT_SECONDS=2 exec /usr/local/bin/debian-ssh-ngrok-entrypoint
     ' >/dev/null
 
 for _ in $(seq 1 20); do
@@ -84,7 +84,7 @@ for _ in $(seq 1 30); do
     if docker exec "$container_name" test -e /home/user/health/healthz; then
         current_mtime="$(docker exec "$container_name" stat -c %Y /home/user/health/healthz)"
         current="$(docker exec "$container_name" cat /home/user/health/ssh.txt 2>/dev/null || true)"
-        if [ "$current_mtime" -gt "$initial_mtime" ] && [ "$current" = "ssh -p 5555 user@127.0.0.1" ]; then
+        if [ "$current_mtime" -gt "$initial_mtime" ] && [ "$current" = "ssh -p 5555 user@6.tcp.eu.ngrok.io" ]; then
             exit 0
         fi
     fi

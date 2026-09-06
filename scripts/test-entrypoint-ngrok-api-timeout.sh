@@ -34,7 +34,7 @@ count=$((count + 1))
 printf '%s\n' "$count" >"$count_file"
 
 if [ "$count" -eq 1 ]; then
-    body='{"tunnels":[{"public_url":"tcp://127.0.0.1:5555"}]}'
+    body='{"tunnels":[{"public_url":"tcp://6.tcp.eu.ngrok.io:5555"}]}'
     printf 'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %s\r\n\r\n%s' "${#body}" "$body"
     exit 0
 fi
@@ -62,9 +62,9 @@ docker run -d --name "$container_name" \
     -eu -c '
         mkdir -p /state/.enclava/config
         printf "%s\n" test-token > /state/.enclava/config/NGROK_AUTHTOKEN
-        printf "%s\n" "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAdTCs3bL+Jy7k3Xr2E9Jv1pR9u4eNf5wQ2 user" > /state/.enclava/config/DEBIAN_SSH_AUTHORIZED_KEYS
+        printf "%s\n" "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFs+9CpiYHcxHSrgrn+v6Hla6CkuQCkWfmL0SUlVuezO debian-ssh-ngrok-docker-test" > /state/.enclava/config/DEBIAN_SSH_AUTHORIZED_KEYS
         touch /state/.enclava/config/.ready
-        DEBIAN_NGROK_API_TIMEOUT_SECONDS=2 DEBIAN_SSH_CONFIG_WAIT_SECONDS=1 DEBIAN_SSH_SUPERVISE_INTERVAL_SECONDS=1 exec /usr/local/bin/debian-ssh-ngrok-entrypoint
+        NGROK_TCP_URL=6.tcp.eu.ngrok.io:5555 DEBIAN_NGROK_API_TIMEOUT_SECONDS=2 DEBIAN_SSH_CONFIG_WAIT_SECONDS=1 DEBIAN_SSH_SUPERVISE_INTERVAL_SECONDS=1 exec /usr/local/bin/debian-ssh-ngrok-entrypoint
     ' >/dev/null
 
 for _ in $(seq 1 20); do

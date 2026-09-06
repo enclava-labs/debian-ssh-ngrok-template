@@ -53,18 +53,14 @@ jobs:
             exit 1
           fi
 
-      - name: Validate entrypoint scripts
+      - name: Validate shell syntax
         run: |
           bash -n entrypoint.sh scripts/*.sh
           sh -n entrypoint.sh scripts/*.sh
-          scripts/test-entrypoint-config-validation.sh
+          scripts/test-workflow-actions-pinned.sh
 
-      - name: Run Docker entrypoint smoke tests
-        run: |
-          scripts/test-image-layout.sh
-          scripts/test-entrypoint-missing-config-stays-alive.sh
-          scripts/test-entrypoint-config-dir.sh
-          scripts/test-entrypoint-ngrok-tcp-url.sh
+      - name: Run Docker entrypoint suite
+        run: scripts/run-docker-test-suite.sh
 
       - name: Log in to GHCR
         if: github.event_name != 'pull_request'
@@ -107,7 +103,7 @@ jobs:
 
       - name: Install cosign
         if: github.event_name != 'pull_request'
-        uses: sigstore/cosign-installer@v3
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
 
       - name: Sign pushed digest
         if: github.event_name != 'pull_request'
@@ -118,7 +114,7 @@ jobs:
 
       - name: Upload image digest artifact
         if: github.event_name != 'pull_request'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: debian-ssh-ngrok-template-image
           path: dist/debian-ssh-ngrok-template-image.txt

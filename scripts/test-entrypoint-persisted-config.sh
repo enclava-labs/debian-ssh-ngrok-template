@@ -32,7 +32,7 @@ set -eu
 root="$(mktemp -d)"
 mkdir -p "$root/api"
 cat >"$root/api/tunnels" <<'JSON'
-{"tunnels":[{"public_url":"tcp://127.0.0.1:5555"}]}
+{"tunnels":[{"public_url":"tcp://6.tcp.eu.ngrok.io:5555"}]}
 JSON
 exec busybox httpd -f -p 127.0.0.1:4040 -h "$root"
 STUB
@@ -48,9 +48,9 @@ docker run -d --name "$container_one" \
     -eu -c '
         mkdir -p /state/app-data/.enclava/config
         printf "%s\n" test-token > /state/app-data/.enclava/config/NGROK_AUTHTOKEN
-        printf "%s\n" "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAdTCs3bL+Jy7k3Xr2E9Jv1pR9u4eNf5wQ2 user" > /state/app-data/.enclava/config/DEBIAN_SSH_AUTHORIZED_KEYS
+        printf "%s\n" "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFs+9CpiYHcxHSrgrn+v6Hla6CkuQCkWfmL0SUlVuezO debian-ssh-ngrok-docker-test" > /state/app-data/.enclava/config/DEBIAN_SSH_AUTHORIZED_KEYS
         touch /state/app-data/.enclava/config/.ready
-        DEBIAN_SSH_CONFIG_WAIT_SECONDS=1 exec /usr/local/bin/debian-ssh-ngrok-entrypoint
+        NGROK_TCP_URL=6.tcp.eu.ngrok.io:5555 DEBIAN_SSH_CONFIG_WAIT_SECONDS=1 exec /usr/local/bin/debian-ssh-ngrok-entrypoint
     ' >/dev/null
 
 for _ in $(seq 1 30); do
@@ -78,6 +78,7 @@ docker run -d --name "$container_two" \
     -v "$state_dir:/state" \
     --tmpfs /tmp:uid=10001,gid=10001,mode=1777 \
     -e PATH="/test-bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+    -e NGROK_TCP_URL=6.tcp.eu.ngrok.io:5555 \
     -e DEBIAN_SSH_CONFIG_WAIT_SECONDS=1 \
     -v "$stub_dir:/test-bin:ro" \
     "$IMAGE_TAG" >/dev/null
