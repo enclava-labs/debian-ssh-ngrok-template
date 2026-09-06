@@ -8,6 +8,8 @@ docker build -t "$IMAGE_TAG" .
 
 stub_dir="$(mktemp -d)"
 container_name="debian-ssh-ngrok-api-timeout-$$"
+ssh-keygen -q -t ed25519 -N '' -C test@example -f "$stub_dir/id_ed25519"
+public_key="$(cat "$stub_dir/id_ed25519.pub")"
 cleanup() {
     docker rm -f "$container_name" >/dev/null 2>&1 || true
     docker rmi "$TEST_IMAGE_TAG" >/dev/null 2>&1 || true
@@ -34,7 +36,7 @@ count=$((count + 1))
 printf '%s\n' "$count" >"$count_file"
 
 if [ "$count" -eq 1 ]; then
-    body='{"tunnels":[{"public_url":"tcp://127.0.0.1:5555"}]}'
+    body='{"tunnels":[{"public_url":"tcp://6.tcp.eu.ngrok.io:5555"}]}'
     printf 'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %s\r\n\r\n%s' "${#body}" "$body"
     exit 0
 fi
@@ -57,11 +59,14 @@ docker build --build-arg "BASE_IMAGE=$IMAGE_TAG" -t "$TEST_IMAGE_TAG" "$stub_dir
 docker run -d --name "$container_name" \
     --tmpfs /state:uid=10001,gid=10001,mode=0770 \
     --tmpfs /tmp:uid=10001,gid=10001,mode=1777 \
+    -e TEST_PUBLIC_KEY="$public_key" \
     --entrypoint /bin/sh \
     "$TEST_IMAGE_TAG" \
     -eu -c '
         mkdir -p /state/.enclava/config
         printf "%s\n" test-token > /state/.enclava/config/NGROK_AUTHTOKEN
+        printf "%s\n" 6.tcp.eu.ngrok.io:5555 > /state/.enclava/config/NGROK_TCP_URL
+        printf "%s\n" "$TEST_PUBLIC_KEY" > /state/.enclava/config/DEBIAN_SSH_AUTHORIZED_KEYS
         touch /state/.enclava/config/.ready
         DEBIAN_NGROK_API_TIMEOUT_SECONDS=2 DEBIAN_SSH_CONFIG_WAIT_SECONDS=1 DEBIAN_SSH_SUPERVISE_INTERVAL_SECONDS=1 exec /usr/local/bin/debian-ssh-ngrok-entrypoint
     ' >/dev/null

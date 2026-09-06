@@ -1,12 +1,7 @@
-name: Build Debian SSH ngrok Template Image
+name: Validate Debian SSH ngrok Template Image
 
 on:
   workflow_dispatch:
-    inputs:
-      version_tag:
-        description: "Optional additional image tag to publish. Manual tags must start with manual-."
-        required: false
-        type: string
   push:
     branches: ["main"]
     paths:
@@ -14,96 +9,57 @@ on:
       - "Dockerfile"
       - "entrypoint.sh"
       - "README.md"
+      - "scripts/**"
   pull_request:
     paths:
       - ".github/workflows/image.yml"
       - "Dockerfile"
       - "entrypoint.sh"
       - "README.md"
+      - "scripts/**"
 
 jobs:
-  build-and-push:
-    name: Build and push image
-    if: >-
-      github.event_name == 'pull_request' ||
-      github.event_name == 'push' ||
-      (github.event_name == 'workflow_dispatch' &&
-        (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')))
+  validate:
+    name: Validate template image
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write
-      packages: write
 
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
-
-      - name: Validate manual image tag
-        if: github.event_name == 'workflow_dispatch' && github.event.inputs.version_tag != ''
-        env:
-          VERSION_TAG: ${{ github.event.inputs.version_tag }}
+      - name: Shell syntax
         run: |
-          if [[ ! "${VERSION_TAG}" =~ ^manual-[a-z0-9][a-z0-9_.-]{0,119}$ ]]; then
-            echo "::error::Manual image tags must match ^manual-[a-z0-9][a-z0-9_.-]{0,119}$ to avoid spoofing protected deployment tags."
-            exit 1
-          fi
+          sh -n entrypoint.sh
+          sh -n scripts/test-image-layout.sh
+          sh -n scripts/test-entrypoint-keys.sh
+          sh -n scripts/test-entrypoint-ngrok-url.sh
+          sh -n scripts/test-entrypoint-config-dir.sh
+          sh -n scripts/test-entrypoint-ngrok-api-timeout.sh
+          sh -n scripts/test-entrypoint-supervision.sh
+          sh -n scripts/test-build-files.sh
+          sh -n scripts/test-workflow.sh
 
-      - name: Log in to GHCR
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Workflow contract tests
+        run: scripts/test-workflow.sh
 
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@80c7e94dd9b9319bd5eb7a0e0fe9291e23a2a2e9 # v6.1.0
-        with:
-          images: ghcr.io/enclava-labs/debian-ssh-ngrok-template
-          tags: |
-            type=ref,event=branch
-            type=ref,event=tag
-            type=sha,prefix=
-            type=raw,value=${{ github.event.inputs.version_tag }},enable=${{ github.event_name == 'workflow_dispatch' && github.event.inputs.version_tag != '' }}
+      - name: Build file tests
+        run: scripts/test-build-files.sh
 
-      - name: Build and push
-        id: build
-        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
-        with:
-          context: .
-          file: Dockerfile
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          provenance: true
+      - name: SSH key validation tests
+        run: scripts/test-entrypoint-keys.sh
 
-      - name: Write image digest artifact
-        if: github.event_name != 'pull_request'
-        run: |
-          mkdir -p dist
-          image_ref="ghcr.io/enclava-labs/debian-ssh-ngrok-template@${{ steps.build.outputs.digest }}"
-          printf '%s\n' "${image_ref}" > dist/debian-ssh-ngrok-template-image.txt
+      - name: ngrok URL validation tests
+        run: scripts/test-entrypoint-ngrok-url.sh
 
-      - name: Install cosign
-        if: github.event_name != 'pull_request'
-        uses: sigstore/cosign-installer@v3
+      - name: Image layout test
+        run: scripts/test-image-layout.sh
 
-      - name: Sign pushed digest
-        if: github.event_name != 'pull_request'
-        env:
-          IMAGE: ghcr.io/enclava-labs/debian-ssh-ngrok-template
-          DIGEST: ${{ steps.build.outputs.digest }}
-        run: cosign sign --yes "${IMAGE}@${DIGEST}"
+      - name: Config directory test
+        run: scripts/test-entrypoint-config-dir.sh
 
-      - name: Upload image digest artifact
-        if: github.event_name != 'pull_request'
-        uses: actions/upload-artifact@v4
-        with:
-          name: debian-ssh-ngrok-template-image
-          path: dist/debian-ssh-ngrok-template-image.txt
+      - name: ngrok API timeout test
+        run: scripts/test-entrypoint-ngrok-api-timeout.sh
+
+      - name: Supervision test
+        run: scripts/test-entrypoint-supervision.sh
