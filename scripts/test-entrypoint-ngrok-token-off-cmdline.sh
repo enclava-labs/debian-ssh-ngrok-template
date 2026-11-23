@@ -14,7 +14,8 @@ stub_dir="$(mktemp -d)"
 cleanup() {
     rm -rf "$stub_dir"
 }
-trap cleanup EXIT
+# POSIX sh keeps ONE trap per signal: the second registration below used
+# to silently discard this one and leak the host-side stub dir.
 
 cat >"$stub_dir/ngrok" <<'STUB'
 #!/bin/sh
@@ -38,7 +39,8 @@ docker rm -f "$container_name" >/dev/null 2>&1 || true
 docker_cleanup() {
     docker rm -f "$container_name" >/dev/null 2>&1 || true
 }
-trap docker_cleanup EXIT
+# Single EXIT trap runs both cleanups: host stub dir and container.
+trap 'cleanup; docker_cleanup' EXIT
 
 dummy_token="dummy-token-never-real-9f8e7d6c"
 dummy_key="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINncqj+z395SDlU4JsYI38lpxfztRl6dQe9zANxPM/9W dummy-ngrok-template-test"

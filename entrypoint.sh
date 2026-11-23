@@ -333,6 +333,33 @@ require_nonempty_env() {
     fi
 }
 
+# ngrok authtokens are base64url strings per ngrok's own documentation of
+# the credential format (https://ngrok.com/docs/agent/credentials/ and
+# https://ngrok.com/docs/guides/upgrade-v2-v3/): [A-Za-z0-9_-]. Rejecting
+# anything else keeps the value structurally inert inside the YAML plain
+# scalar and the shell interpolation below it.
+NGROK_AUTHTOKEN_ALLOWED_CHARSET='A-Za-z0-9_-'
+
+require_charset() {
+    key="$1"
+    allowed="$2"
+    eval "value=\${$key:-}"
+    # The pattern is expanded unquoted on purpose: quoting inside the
+    # bracket expression makes dash treat the class unreliably (members
+    # of the allowlist get rejected), while `case` still interprets the
+    # expanded variable as a pattern. Same shape as validate_uint's
+    # unquoted *[!0-9]* idiom.
+    pattern="*[!$allowed]*"
+    case "$value" in
+        $pattern)
+            # Never echo the value: the message reaches the startup error
+            # and the unready marker, both read by the tenant.
+            echo "$key has an unexpected character set" >&2
+            return 1
+            ;;
+    esac
+}
+
 validate_uint() {
     key="$1"
     value="$2"
@@ -538,7 +565,14 @@ start_ngrok() {
     # the workload and SSH sessions alike, so argv would expose the
     # platform-owned token to anything running inside the workload
     # (issue #1). ngrok reads `authtoken` from its config natively.
-    cat >"$DEBIAN_SSH_HOME/.config/ngrok/ngrok.yml" <<EOF
+    # The file is created 0600 from its first byte (umask 077 in a
+    # subshell, the in-file idiom also used for persisted config keys):
+    # the enclosing dir has been 0700 since two lines up, so this guards
+    # against a future dir-mode regression rather than closing a live
+    # cross-uid window. The chmod below stays as belt-and-braces and must
+    # remain OUTSIDE the subshell: a `return` inside `( )` would return
+    # from the subshell, not this function.
+    ( umask 077; cat >"$DEBIAN_SSH_HOME/.config/ngrok/ngrok.yml" <<EOF
 version: 3
 authtoken: ${NGROK_AUTHTOKEN}
 agent:
@@ -547,6 +581,7 @@ agent:
   log_format: json
   log_level: debug
 EOF
+    ) || return 1
     chmod 600 "$DEBIAN_SSH_HOME/.config/ngrok/ngrok.yml" || return 1
     if [ -n "$NGROK_TCP_URL" ]; then
         ngrok tcp "127.0.0.1:${DEBIAN_SSH_PORT}" \
@@ -1052,6 +1087,7 @@ wait_for_config || fail_stay_alive "CAP config wait failed"
 load_cap_config || fail_stay_alive "CAP config load failed"
 load_persisted_config || fail_stay_alive "persisted config load failed"
 require_nonempty_env NGROK_AUTHTOKEN || fail_stay_alive "NGROK_AUTHTOKEN is required"
+require_charset NGROK_AUTHTOKEN "$NGROK_AUTHTOKEN_ALLOWED_CHARSET" || fail_stay_alive "NGROK_AUTHTOKEN has an unexpected character set"
 require_nonempty_env DEBIAN_SSH_AUTHORIZED_KEYS || fail_stay_alive "DEBIAN_SSH_AUTHORIZED_KEYS is required"
 write_authorized_keys || fail_stay_alive "SSH authorized key validation failed"
 prepare_ssh_ready_key || fail_stay_alive "SSH readiness key failed"
