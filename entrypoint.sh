@@ -530,22 +530,30 @@ start_ngrok() {
     mkdir -p "${DEBIAN_SSH_NGROK_LOG_FILE%/*}" || return 1
     : >"$DEBIAN_SSH_NGROK_LOG_FILE" || return 1
     chmod 600 "$DEBIAN_SSH_NGROK_LOG_FILE" || return 1
+    mkdir -p "$DEBIAN_SSH_HOME/.config/ngrok" || return 1
+    chmod 700 "$DEBIAN_SSH_HOME/.config/ngrok" || return 1
+    # The authtoken is written into the config file (mode 0600, this uid)
+    # instead of being passed on the command line: /proc/<pid>/cmdline is
+    # readable by every same-uid process, and this image runs one uid for
+    # the workload and SSH sessions alike, so argv would expose the
+    # platform-owned token to anything running inside the workload
+    # (issue #1). ngrok reads `authtoken` from its config natively.
     cat >"$DEBIAN_SSH_HOME/.config/ngrok/ngrok.yml" <<EOF
 version: 3
+authtoken: ${NGROK_AUTHTOKEN}
 agent:
   web_addr: 127.0.0.1:${DEBIAN_NGROK_WEB_PORT}
   log: ${DEBIAN_SSH_NGROK_LOG_FILE}
   log_format: json
   log_level: debug
 EOF
+    chmod 600 "$DEBIAN_SSH_HOME/.config/ngrok/ngrok.yml" || return 1
     if [ -n "$NGROK_TCP_URL" ]; then
         ngrok tcp "127.0.0.1:${DEBIAN_SSH_PORT}" \
             --url "$NGROK_TCP_URL" \
-            --authtoken "$NGROK_AUTHTOKEN" \
             --config "$DEBIAN_SSH_HOME/.config/ngrok/ngrok.yml" &
     else
         ngrok tcp "127.0.0.1:${DEBIAN_SSH_PORT}" \
-            --authtoken "$NGROK_AUTHTOKEN" \
             --config "$DEBIAN_SSH_HOME/.config/ngrok/ngrok.yml" &
     fi
     NGROK_PID="$!"
